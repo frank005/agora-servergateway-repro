@@ -57,7 +57,7 @@ Example `.env` for encryption (GCM2 with salt):
 AGORA_ENCRYPTION_ENABLE=1
 AGORA_ENCRYPTION_MODE=AES-128-GCM2
 AGORA_ENCRYPTION_SECRET=your_32_byte_hex_or_ascii_key_here
-AGORA_ENCRYPTION_SALT=X5w9T+50kzxVOnkJKiY/lUk82/bES2kATOt3vBuGEDw=
+AGORA_ENCRYPTION_SALT=your_salt_here
 ```
 
 ## Agora SDK log file
