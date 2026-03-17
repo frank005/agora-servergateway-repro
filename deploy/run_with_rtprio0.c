@@ -13,8 +13,29 @@
 
 #define REPRO_BIN_CPP "/app/repro_pthread_init"
 #define REPRO_BIN_V2  "/app/repro_v2_full"
+#define OS_RELEASE    "/etc/os-release"
+#define LINE_MAX      256
+
+static void print_os_version(void) {
+  FILE *f = fopen(OS_RELEASE, "r");
+  if (!f) return;
+  char line[LINE_MAX];
+  while (fgets(line, sizeof(line), f)) {
+    if (strncmp(line, "PRETTY_NAME=", 12) == 0) {
+      char *v = line + 12;
+      while (*v == '"' || *v == '\'') v++;
+      size_t len = strlen(v);
+      while (len > 0 && (v[len - 1] == '"' || v[len - 1] == '\'' || v[len - 1] == '\n')) v[--len] = '\0';
+      fprintf(stderr, "[entrypoint] %s\n", v);
+      break;
+    }
+  }
+  fclose(f);
+}
 
 int main(int argc, char **argv) {
+  print_os_version();
+
   struct rlimit r = { 0, 0 };
   (void)setrlimit(RLIMIT_RTPRIO, &r);
 

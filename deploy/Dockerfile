@@ -2,7 +2,7 @@
 # Build on Linux x86_64:  docker build -f deploy/Dockerfile -t agora-repro .
 # Build on Apple Silicon:  docker build --platform=linux/amd64 -f deploy/Dockerfile -t agora-repro .
 # SDK at repo root:  agora_rtc_sdk/agora_sdk (override with --build-arg AGORA_SDK_DIR=...).
-FROM ubuntu:22.04 AS builder
+FROM ubuntu:24.04 AS builder
 ARG AGORA_SDK_DIR=agora_rtc_sdk
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -21,7 +21,7 @@ RUN cmake ../deploy -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build . \
     && g++ -O2 -o run_with_rtprio0 ../deploy/run_with_rtprio0.c \
     && g++ -shared -fPIC -o fake_setschedparam.so ../deploy/fake_setschedparam.c
 
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libc6 \
