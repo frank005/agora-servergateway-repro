@@ -625,7 +625,11 @@ int main(int argc, char* argv[]) {
         service->release();
         return 1;
       }
-      const char* modeName = (modeVal == 7) ? "AES_128_GCM2" : (modeVal == 8) ? "AES_256_GCM2" : "custom";
+      static const char* const kModeNames[] = {
+        "?", "AES_128_XTS", "AES_128_ECB", "AES_256_XTS", "SM4_128_ECB",
+        "AES_128_GCM", "AES_256_GCM", "AES_128_GCM2", "AES_256_GCM2"
+      };
+      const char* modeName = (modeVal >= 1 && modeVal <= 8) ? kModeNames[modeVal] : "?";
       fprintf(stderr, "Encryption enabled: mode=%s (%d), key_len=%zu, salt=%s (all clients in channel must use same mode/key/salt).\n",
               modeName, modeVal, encryptionSecret.size(), encryption_mode_needs_salt(modeVal) ? "32 bytes" : "n/a");
     }

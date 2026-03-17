@@ -227,7 +227,7 @@ typedef int   (*pfn_agora_video_frame_sender_send)(void*, const external_video_f
 
 static pfn_agora_service_create                                 g_svc_create = nullptr;
 static pfn_agora_service_initialize                             g_svc_init = nullptr;
-static pfn_agora_service_at_exit                                g_svc_at_exit = nullptr;
+static pfn_agora_service_at_exit                                g_svc_at_exit = nullptr;  /* optional */
 static pfn_agora_service_release                                g_svc_release = nullptr;
 static pfn_agora_service_set_log_file                           g_svc_set_log_file = nullptr;
 static pfn_agora_service_set_log_filter                         g_svc_set_log_filter = nullptr;
@@ -280,16 +280,12 @@ static pfn_agora_video_frame_sender_send                        g_video_send = n
     } \
   } while (0)
 
-#define LOAD_SYM_OPT(lib, sym, type, var) \
-  do { \
-    (var) = (type)dlsym((lib), (sym)); \
-    if (!(var)) fprintf(stderr, "[v2] dlsym(%s) not found (optional): %s\n", (sym), dlerror()); \
-  } while (0)
 
 static int load_symbols(void* lib) {
   LOAD_SYM(lib, "agora_service_create",             pfn_agora_service_create,             g_svc_create);
   LOAD_SYM(lib, "agora_service_initialize",         pfn_agora_service_initialize,         g_svc_init);
-  LOAD_SYM_OPT(lib, "agora_service_at_exit",        pfn_agora_service_at_exit,            g_svc_at_exit);
+  /* agora_service_at_exit is optional — not present in all SDK builds */
+  g_svc_at_exit = (pfn_agora_service_at_exit)dlsym(lib, "agora_service_at_exit");
   LOAD_SYM(lib, "agora_service_release",            pfn_agora_service_release,            g_svc_release);
   LOAD_SYM(lib, "agora_service_set_log_file",       pfn_agora_service_set_log_file,       g_svc_set_log_file);
   LOAD_SYM(lib, "agora_service_set_log_filter",     pfn_agora_service_set_log_filter,     g_svc_set_log_filter);
@@ -827,7 +823,11 @@ int main(int argc, char* argv[]) {
         teardown_conn(local_user, conn, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
         if (g_svc_at_exit) g_svc_at_exit(svc); g_svc_release(svc); dlclose(lib); return 1;
       }
-      const char* modeName = (modeVal==7)?"AES_128_GCM2":(modeVal==8)?"AES_256_GCM2":"custom";
+      static const char* const kModeNames[] = {
+        "?", "AES_128_XTS", "AES_128_ECB", "AES_256_XTS", "SM4_128_ECB",
+        "AES_128_GCM", "AES_256_GCM", "AES_128_GCM2", "AES_256_GCM2"
+      };
+      const char* modeName = (modeVal >= 1 && modeVal <= 8) ? kModeNames[modeVal] : "?";
       fprintf(stderr, "Encryption enabled: mode=%s (%d), key_len=%zu, salt=%s (all clients must match).\n",
               modeName, modeVal, encSecret.size(), encryption_mode_needs_salt(modeVal) ? "32 bytes" : "n/a");
     }
