@@ -15,7 +15,6 @@ build/
 cmake-build-*/
 *.o
 *.obj
-*.so
 *.dll
 *.exe
 
