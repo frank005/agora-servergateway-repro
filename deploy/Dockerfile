@@ -17,7 +17,7 @@ COPY ${AGORA_SDK_DIR} /workspace/agora_rtc_sdk
 COPY deploy/repro_pthread_init.cpp deploy/CMakeLists.txt deploy/run_with_rtprio0.c deploy/fake_setschedparam.c /workspace/deploy/
 
 WORKDIR /workspace/build
-RUN cmake ../deploy -DCMAKE_BUILD_TYPE=RelWithDebInfo -DAGORA_SDK_DIR=/workspace/agora_rtc_sdk/agora_sdk && cmake --build . \
+RUN cmake ../deploy -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build . \
     && g++ -O2 -o run_with_rtprio0 ../deploy/run_with_rtprio0.c \
     && g++ -shared -fPIC -o fake_setschedparam.so ../deploy/fake_setschedparam.c
 

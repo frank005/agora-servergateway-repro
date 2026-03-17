@@ -111,8 +111,8 @@ Put your credentials in **`deploy/.env`** (same folder as `docker-compose.yml`).
 
 ```bash
 # deploy/.env
-AGORA_APP_ID=a9a4b25e4e8b4a558aa39780d1a84342
-AGORA_CHANNEL_ID=frank
+AGORA_APP_ID=your_appid_here
+AGORA_CHANNEL_ID=your_channel_name_here
 # AGORA_TOKEN=   # omit if token auth is disabled in your project
 # AGORA_UID=0    # optional
 ```

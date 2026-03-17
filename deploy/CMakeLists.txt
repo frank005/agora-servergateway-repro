@@ -1,18 +1,24 @@
 cmake_minimum_required(VERSION 3.10)
 project(agora_repro CXX)
 
-# SDK at repo root:  agora_rtc_sdk/agora_sdk (override with -DAGORA_SDK_DIR=...)
+# SDK at repo root. Support both layouts:
+# - agora_rtc_sdk/agora_sdk/include/IAgoraService.h
+# - agora_rtc_sdk/include/IAgoraService.h
 if(NOT DEFINED AGORA_SDK_DIR)
-  set(AGORA_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../agora_rtc_sdk/agora_sdk")
+  set(_SDK_DIR1 "${CMAKE_CURRENT_SOURCE_DIR}/../agora_rtc_sdk/agora_sdk")
+  set(_SDK_DIR2 "${CMAKE_CURRENT_SOURCE_DIR}/../agora_rtc_sdk")
+  if(EXISTS "${_SDK_DIR1}/include/IAgoraService.h")
+    set(AGORA_SDK_DIR "${_SDK_DIR1}")
+  elseif(EXISTS "${_SDK_DIR2}/include/IAgoraService.h")
+    set(AGORA_SDK_DIR "${_SDK_DIR2}")
+  else()
+    message(FATAL_ERROR "Could not find IAgoraService.h under ../agora_rtc_sdk. "
+                        "Expected either ../agora_rtc_sdk/agora_sdk/include or ../agora_rtc_sdk/include.")
+  endif()
 endif()
 
 add_executable(repro_pthread_init repro_pthread_init.cpp)
-# Include SDK headers from AGORA_SDK_DIR if set, and also from the default
-# relative path used in Docker (/workspace/agora_rtc_sdk/agora_sdk/include).
-target_include_directories(repro_pthread_init PRIVATE
-  "${AGORA_SDK_DIR}/include"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../agora_rtc_sdk/agora_sdk/include"
-)
+target_include_directories(repro_pthread_init PRIVATE "${AGORA_SDK_DIR}/include")
 target_compile_definitions(repro_pthread_init PRIVATE TARGET_OS_LINUX)
 target_link_directories(repro_pthread_init PRIVATE "${AGORA_SDK_DIR}")
 target_link_libraries(repro_pthread_init PRIVATE
