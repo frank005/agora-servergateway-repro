@@ -28,6 +28,8 @@
 #include <pthread.h>
 #include <sched.h>
 #include <sys/resource.h>
+#include <unistd.h>
+#include <dlfcn.h>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -426,6 +428,16 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "Bisect mode: will stop after '%s' (AGORA_REPRO_STOP_AFTER).\n", stopAfter.c_str());
 
   if (token.empty()) token = appId;
+
+  // Ensure libagora_rtc_sdk is loaded via dlopen before using C++ APIs.
+  fprintf(stderr, "0. Loading Agora SDK via dlopen...\n");
+  {
+    void* h = dlopen("libagora_rtc_sdk.so", RTLD_NOW | RTLD_LOCAL);
+    if (!h) {
+      fprintf(stderr, "dlopen libagora_rtc_sdk.so failed: %s\n", dlerror());
+      return 1;
+    }
+  }
 
   /* Log scheduler limits and current thread priority (context for glibc tpp.c assertion) */
   {

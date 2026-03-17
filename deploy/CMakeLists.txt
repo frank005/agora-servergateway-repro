@@ -22,7 +22,7 @@ if(NOT DEFINED AGORA_SDK_DIR)
   get_filename_component(AGORA_SDK_DIR "${_IA_INCLUDE_DIR}" DIRECTORY)
 endif()
 
-add_executable(repro_pthread_init repro_v2.cpp)
+add_executable(repro_pthread_init repro_pthread_init.cpp)
 target_include_directories(repro_pthread_init PRIVATE
   "${AGORA_SDK_DIR}/include"
   "${AGORA_SDK_DIR}/include/c"
