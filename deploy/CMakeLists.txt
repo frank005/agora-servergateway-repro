@@ -7,7 +7,12 @@ if(NOT DEFINED AGORA_SDK_DIR)
 endif()
 
 add_executable(repro_pthread_init repro_pthread_init.cpp)
-target_include_directories(repro_pthread_init PRIVATE "${AGORA_SDK_DIR}/include")
+# Include SDK headers from AGORA_SDK_DIR if set, and also from the default
+# relative path used in Docker (/workspace/agora_rtc_sdk/agora_sdk/include).
+target_include_directories(repro_pthread_init PRIVATE
+  "${AGORA_SDK_DIR}/include"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../agora_rtc_sdk/agora_sdk/include"
+)
 target_compile_definitions(repro_pthread_init PRIVATE TARGET_OS_LINUX)
 target_link_directories(repro_pthread_init PRIVATE "${AGORA_SDK_DIR}")
 target_link_libraries(repro_pthread_init PRIVATE
