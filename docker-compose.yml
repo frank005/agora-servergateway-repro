@@ -1,0 +1,19 @@
+# Agora Server Gateway repro. Run from repo root:  docker compose run --rm repro
+# Env: deploy/.env (AGORA_APP_ID, AGORA_CHANNEL_ID, etc.)
+# SDK at repo root:  agora_rtc_sdk/
+
+services:
+  repro:
+    env_file:
+      - deploy/.env
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+      args:
+        AGORA_SDK_DIR: agora_rtc_sdk
+    image: servergateway-repro
+    platform: linux/amd64
+    cap_drop:
+      - ALL
+    ulimits:
+      rtprio: 0

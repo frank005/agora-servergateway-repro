@@ -1,0 +1,24 @@
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.log
+
+# Env / secrets
+.env
+.env.*
+!*.env.example
+
+# Build artifacts
+build/
+cmake-build-*/
+*.o
+*.obj
+*.so
+*.dll
+*.exe
+
+# Node / npm (just in case)
+node_modules/
+
