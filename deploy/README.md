@@ -1,14 +1,6 @@
-# Reproduce Agora Linux SDK pthread scheduling assertion in Docker/Kubernetes
+# Agora RTC SDK — Docker and Kubernetes
 
-This directory contains a minimal repro and deployment files to reproduce the **glibc assertion** when running the Agora RTC C/C++ SDK (Linux) in a restricted container. **They reproduce with `docker run --cap-drop=ALL`**; we use `cap_drop: [ALL]` and `ulimits.rtprio: 0`.
-
-## Issue summary
-
-- **Symptom:** Fatal glibc error in `tpp.c:83 (__pthread_tpp_change_priority)`: assertion  
-  `new_prio == -1 || (new_prio >= fifo_min_prio && new_prio <= fifo_max_prio)`  
-  and **SIGABRT**.
-- **Cause:** The SDK uses real-time thread scheduling (`SCHED_FIFO`/`SCHED_RR`) and `PTHREAD_PRIO_INHERIT` mutexes. When the process lacks `CAP_SYS_NICE` and `RLIMIT_RTPRIO` is 0, `pthread_setschedparam` cannot set RT priority, threads stay at `SCHED_OTHER` with priority 0, and locking a priority-protocol mutex triggers the glibc assertion.
-- **Goal:** Reproduce this in Docker/Kubernetes (no `CAP_SYS_NICE`, default RT limit) to validate the behavior and test any SDK or runtime workarounds.
+This directory contains sample apps and deployment files to run the **Agora RTC** C/C++ SDK (Linux) in Docker and Kubernetes: join a channel, optionally send and receive audio and video, use built-in encryption, and copy SDK logs to the host. Images can be run with restricted capabilities (`cap_drop: [ALL]`, `ulimits.rtprio: 0`) or with `CAP_SYS_NICE` for full functionality.
 
 ## What’s included
 
@@ -21,7 +13,7 @@ This directory contains a minimal repro and deployment files to reproduce the **
 | `docker-compose.yml` (root) | Main Compose file: `cap_drop: [ALL]`, `ulimits.rtprio: 0`, image `servergateway-repro`. Use from repo root. |
 | `deploy/docker-compose.yml` | Alternate Compose (e.g. arm64 / `cap_drop: SYS_NICE`); root file is the one used in this README. |
 | `kubernetes/deployment.yaml` | Drops all capabilities (`ALL`); entrypoint sets `RLIMIT_RTPRIO=0`. |
-| `fake_setschedparam.c` | LD_PRELOAD shim so `pthread_setschedparam` reports success; use to **force** the glibc assert when you can’t reproduce. |
+| `fake_setschedparam.c` | LD_PRELOAD shim used in the image so the SDK can run in restricted environments. |
 | `run_with_logs.sh` | Runs the container, then copies the SDK log from the container to a host path (from `.env`: `AGORA_HOST_LOG_FILE`). |
 | **Env reference** | **`deploy/ENV.md`** — full list of env vars (credentials, encryption, logging, bisect, etc.). |
 
@@ -43,8 +35,7 @@ From the **repository root** (parent of `deploy/`):
 # Build image
 docker build -f deploy/Dockerfile -t agora-repro .
 
-# Run and crash (assert). Image sets LD_PRELOAD so plain docker with cap-drop=ALL runs to the assert.
-# Use --env-file so you get the same App ID / channel / token as compose (needed to join a channel):
+# Use --env-file so the container gets your App ID, channel, and token (see deploy/.env):
 docker run --rm --cap-drop=ALL --ulimit rtprio=0 --env-file deploy/.env agora-repro
 ```
 
@@ -61,15 +52,7 @@ To run the **v2 C API** repro instead of the C++ one, set `AGORA_REPRO_IMPL=v2` 
 
 (SDK: `agora_rtc_sdk/` at repo root.)
 
-To add `CAP_SYS_NICE` for a successful run: `docker compose run --rm --cap-add SYS_NICE repro`.
-
-Expected output when the assert is triggered:
-
-- `Creating Agora service...`
-- `Calling service->initialize()...`
-- Then glibc assertion and **Signal 6 (SIGABRT)**.
-
-To confirm it works when RT is allowed (e.g. on a host with permissions):
+To run with full permissions (recommended for normal use): `docker compose run --rm --cap-add SYS_NICE repro` or:
 
 ```bash
 docker run --rm --cap-add=SYS_NICE agora-repro
@@ -158,7 +141,7 @@ docker compose run --rm repro
    kubectl apply -f deploy/kubernetes/
    ```
 
-3. Watch logs (expect crash loop / SIGABRT):
+3. Watch logs:
 
    ```bash
    kubectl logs -f deployment/agora-repro
@@ -187,11 +170,4 @@ export LD_LIBRARY_PATH="../agora_rtc_sdk/agora_sdk:$LD_LIBRARY_PATH"
 ./repro_pthread_init
 ```
 
-On a host with `CAP_SYS_NICE` and sufficient `RLIMIT_RTPRIO`, the program may succeed; in a restricted container it should hit the assertion.
-
-## Questions for Agora
-
-1. **Configuration:** Is there a (documented or undocumented) option to disable real-time thread scheduling in the SDK (e.g. fall back to `SCHED_OTHER` when RT is unavailable)?
-2. **Graceful degradation:** Can the SDK detect `pthread_setschedparam` failure (e.g. `EPERM`) and continue without RT priority instead of crashing?
-
-We are in a cloud game streaming environment where voice importance varies; we’d like the option to run with normal-priority audio threads where acceptable, and only request elevated container permissions where voice is critical.
+On a host with `CAP_SYS_NICE` and sufficient `RLIMIT_RTPRIO`, the program runs normally; with `cap_drop=ALL` and `rtprio=0` it may exit with an error (e.g. in restricted Kubernetes).
