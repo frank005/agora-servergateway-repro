@@ -14,13 +14,16 @@ This directory contains a minimal repro and deployment files to reproduce the **
 
 | Item | Description |
 |------|-------------|
-| `repro_pthread_init.cpp` | Minimal C++ program that calls `createAgoraService()`, `initialize()`, and `createLocalAudioTrack()` to hit the same code paths that spin up audio threads. |
-| `Makefile.repro` / `CMakeLists.txt` | Build the repro against the SDK in `../agora_rtc_sdk/agora_sdk`. |
-| `Dockerfile` | Multi-stage build: compile repro + `run_with_rtprio0` entrypoint wrapper; runtime image runs **without** `CAP_SYS_NICE`. |
-| `docker-compose.yml` (root) | Runs with `cap_drop: [ALL]` and `ulimits.rtprio: 0` (matches `docker run --cap-drop=ALL`). |
+| `repro_pthread_init.cpp` | C++ repro using the SDK’s C++ API: `createAgoraService()`, `initialize()`, create local audio track, optional connect/publish/subscribe. |
+| `repro_v2_full.cpp` | Parallel repro using the **v2 C API** (`agora_service_*`, `agora_rtc_conn_*`, etc.) with **dlopen/dlsym only** (no link to `libagora_rtc_sdk`). Same env vars and behavior as the C++ repro. Set `AGORA_REPRO_IMPL=v2` to run this binary. |
+| `CMakeLists.txt` / `Makefile.repro` | Build both repros (CMake builds both; Makefile.repro builds only `repro_pthread_init` for local use). |
+| `Dockerfile` | Multi-stage build (Ubuntu 24.04): compiles both repros + `run_with_rtprio0` entrypoint; runtime runs **without** `CAP_SYS_NICE`. |
+| `docker-compose.yml` (root) | Main Compose file: `cap_drop: [ALL]`, `ulimits.rtprio: 0`, image `servergateway-repro`. Use from repo root. |
+| `deploy/docker-compose.yml` | Alternate Compose (e.g. arm64 / `cap_drop: SYS_NICE`); root file is the one used in this README. |
 | `kubernetes/deployment.yaml` | Drops all capabilities (`ALL`); entrypoint sets `RLIMIT_RTPRIO=0`. |
-| `fake_setschedparam.c` | LD_PRELOAD shim that makes `pthread_setschedparam` report success without changing the thread; use to **force** the glibc assert when you can’t reproduce. |
-| **Docs** | COMMANDS.md, REPRO_NOTES.md, BISECT.md, SDK_PRIORITY.md, and full env reference (including encryption) live in the **docs** folder (e.g. `docs/` at repo root or `servergateway_bak/docs`). |
+| `fake_setschedparam.c` | LD_PRELOAD shim so `pthread_setschedparam` reports success; use to **force** the glibc assert when you can’t reproduce. |
+| `run_with_logs.sh` | Runs the container, then copies the SDK log from the container to a host path (from `.env`: `AGORA_HOST_LOG_FILE`). |
+| **Env reference** | **`deploy/ENV.md`** — full list of env vars (credentials, encryption, logging, bisect, etc.). |
 
 ## Prerequisites
 
@@ -51,6 +54,10 @@ Or with Docker Compose (from repo root):
 docker compose build repro
 docker compose run --rm repro
 ```
+
+Compose builds the image as **`servergateway-repro`**. The examples below use **`agora-repro`** (from `docker build -t agora-repro`). If you use Compose, either run `docker run ... servergateway-repro` or set `AGORA_REPRO_IMAGE=servergateway-repro` when using `run_with_logs.sh`.
+
+To run the **v2 C API** repro instead of the C++ one, set `AGORA_REPRO_IMPL=v2` in `deploy/.env` (or pass `-e AGORA_REPRO_IMPL=v2`). The entrypoint will exec `repro_v2_full`.
 
 (SDK: `agora_rtc_sdk/` at repo root.)
 
@@ -83,7 +90,7 @@ You can pass your Agora credentials via **environment variables** so the repro j
 | `AGORA_SEND_AUDIO` | Set to `1` to publish local audio (440 Hz tone). |
 | `AGORA_SEND_VIDEO` | Set to `1` to publish local video (720p badge + “A” image @ 15 fps). |
 
-**Logging:** Receive logs (`[audio] received remote frame ...`, `[video] received remote frame ...`) are from the **SDK callbacks** — they report the actual raw frames delivered by the SDK (samples, dimensions, etc.). Send logs (`[audio] sent chunk ...`, `[video] sent frame ...`) log what we push to the SDK. Startup logs include `Join duration: N s` (from `AGORA_JOIN_DURATION_SEC`) and every 10 s in channel `[channel] N s remaining`; when the timer expires you get `Duration reached, leaving channel.` Encryption (optional): `AGORA_ENCRYPTION_ENABLE=1`, `AGORA_ENCRYPTION_MODE` (number 1–8 or name, e.g. 7 or AES-128-GCM2), `AGORA_ENCRYPTION_SECRET`, `AGORA_ENCRYPTION_SALT` (for modes 7 and 8). See the **docs** folder for COMMANDS.md (all run commands) and ENV.md (full env reference including encryption). **Agora SDK logs** are written to a file (default `/app/agora_sdk.log`; override with `AGORA_LOG_FILE`) so you can pull them to check decode/encryption errors, e.g. `docker cp <container_id>:/app/agora_sdk.log ./` or run with a volume `-v $(pwd)/logs:/app` and set `AGORA_LOG_FILE=/app/agora_sdk.log`.
+**Logging:** Receive logs (`[audio] received remote frame ...`, `[video] received remote frame ...`) are from the SDK callbacks; send logs (`[audio] sent chunk ...`, `[video] sent frame ...`) log what we push. Startup logs include `Join duration: N s` and every 10 s `[channel] N s remaining`; when the timer expires you get `Duration reached, leaving channel.` **Encryption (optional):** `AGORA_ENCRYPTION_ENABLE=1`, `AGORA_ENCRYPTION_MODE` (1–8 or name, e.g. 7 or AES-128-GCM2), `AGORA_ENCRYPTION_SECRET`, `AGORA_ENCRYPTION_SALT` (for GCM2 modes). See **`deploy/ENV.md`** for the full env reference. **Agora SDK logs** are written inside the container (default `/app/agora_sdk.log`). To copy them to the host after the run, use **`./deploy/run_with_logs.sh`** (reads `AGORA_HOST_LOG_FILE` from `deploy/.env`); or run `docker cp <container_id>:/app/agora_sdk.log ./` manually.
 
 Example (join a channel with token):
 
@@ -159,22 +166,25 @@ docker compose run --rm repro
 
 ## Building the repro locally (no Docker)
 
-From `deploy/`:
+From repo root. **CMake** (builds both `repro_pthread_init` and `repro_v2_full`):
+
+```bash
+cd deploy
+mkdir build && cd build
+cmake ..
+cmake --build .
+export LD_LIBRARY_PATH="../../agora_rtc_sdk/agora_sdk:$LD_LIBRARY_PATH"
+./repro_pthread_init
+# or: ./repro_v2_full
+```
+
+**Make** (builds only `repro_pthread_init`):
 
 ```bash
 cd deploy
 make -f Makefile.repro
 export LD_LIBRARY_PATH="../agora_rtc_sdk/agora_sdk:$LD_LIBRARY_PATH"
 ./repro_pthread_init
-```
-
-Or with CMake:
-
-```bash
-mkdir build && cd build
-cmake ..
-cmake --build .
-LD_LIBRARY_PATH="../agora_rtc_sdk/agora_sdk:$LD_LIBRARY_PATH" ./repro_pthread_init
 ```
 
 On a host with `CAP_SYS_NICE` and sufficient `RLIMIT_RTPRIO`, the program may succeed; in a restricted container it should hit the assertion.

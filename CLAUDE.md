@@ -47,8 +47,9 @@ This file is a persistent reference so any session (or after context loss) knows
 ## Repo layout (relevant parts)
 
 ```
-servergateway/
-├── claude.md                    # This file — project context for AI/humans
+<repo_root>/
+├── CLAUDE.md                    # This file — project context for AI/humans
+├── docker-compose.yml           # Main Compose: cap_drop: [ALL], image servergateway-repro
 ├── agora_rtc_sdk/               # Agora Linux SDK at repo root
 │   ├── PACKAGE_INFO             # e.g. Agora-RTC-*-linux-gnu-...
 │   ├── agora_sdk/               # Headers + .so (libagora_rtc_sdk.so, libaosl.so, ...)
@@ -58,13 +59,17 @@ servergateway/
 │       └── scripts/             # env.cmake, check.cmake, os.cmake — SDK path, libs
 └── deploy/                      # Everything we added for repro
     ├── README.md                # User-facing instructions (Docker, K8s, build)
-    ├── repro_pthread_init.cpp   # Minimal C++ repro (create → initialize → createLocalAudioTrack)
-    ├── Makefile.repro           # Build repro against ../agora_rtc_sdk/agora_sdk
-    ├── CMakeLists.txt           # Same, for CMake (used in Dockerfile)
-    ├── Dockerfile               # Multi-stage: build repro, run without CAP_SYS_NICE
-    ├── docker-compose.yml       # Runs repro with cap_drop: [ALL], ulimits.rtprio: 0
+    ├── repro_pthread_init.cpp   # C++ repro (default binary)
+    ├── repro_v2_full.cpp        # v2 C API repro; use AGORA_REPRO_IMPL=v2
+    ├── CMakeLists.txt           # Builds both repros (used by Dockerfile)
+    ├── Makefile.repro           # Local build of repro_pthread_init only
+    ├── Dockerfile               # Multi-stage Ubuntu 24.04; both repros + entrypoint
+    ├── run_with_rtprio0.c       # Entrypoint: RLIMIT_RTPRIO=0, OS version, exec repro
+    ├── run_with_logs.sh         # Run container, copy SDK log to host (AGORA_HOST_LOG_FILE)
+    ├── ENV.md                   # Full env var reference
+    ├── docker-compose.yml       # Alternate Compose (e.g. arm64)
     └── kubernetes/
-        └── deployment.yaml      # Deployment with capabilities.drop: [SYS_NICE]
+        └── deployment.yaml      # Drops ALL capabilities; image agora-repro:latest
 ```
 
 ---
@@ -86,12 +91,12 @@ servergateway/
 3. **Docker**
    - `docker compose build repro` then `docker compose run --rm repro` (uses `agora_rtc_sdk`, platform linux/amd64).
    - Run with RT allowed: `docker compose run --rm --cap-add SYS_NICE repro`.
-   - Root `docker-compose.yml` defines service `repro` with `cap_drop: [ALL]` and `ulimits.rtprio: 0`.
+   - Root `docker-compose.yml` defines service `repro` with `cap_drop: [ALL]` and `ulimits.rtprio: 0`; image **servergateway-repro**. For plain `docker build -t agora-repro`, use image **agora-repro**; `run_with_logs.sh` defaults to `agora-repro` (set `AGORA_REPRO_IMAGE=servergateway-repro` if using Compose image).
 
 4. **Kubernetes**
    - Build and load/push image (e.g. `agora-repro:latest`), then:  
      `kubectl apply -f deploy/kubernetes/`  
-   - Deployment only drops `SYS_NICE` (no “drop ALL”); container should start and then abort when the repro runs.  
+   - Deployment drops **ALL** capabilities (same as `docker run --cap-drop=ALL`); container should start and then abort when the repro runs.  
    - Logs: `kubectl logs -f deployment/agora-repro` (expect crash/SIGABRT).
 
 ---
@@ -111,8 +116,9 @@ servergateway/
 
 - **Understand the crash:** Read “The issue we’re reproducing” and the `deploy/README.md` summary.
 - **Run the repro:** Use `deploy/README.md` (Docker, Docker Compose, Kubernetes, or local Make/CMake).
-- **Change the repro:** Edit `deploy/repro_pthread_init.cpp`; rebuild with Make or CMake; Docker image rebuild picks up CMake.
-- **Adjust container security:** Edit `deploy/docker-compose.yml` (cap_drop/ulimits) or `deploy/kubernetes/deployment.yaml` (securityContext.capabilities).
-- **Use a different SDK path:** Set Docker build arg `AGORA_SDK_DIR=...` (default `agora_rtc_sdk`); ensure the SDK arch matches the image platform (Dockerfile uses linux/amd64).
+- **Change the repro:** Edit `deploy/repro_pthread_init.cpp` (C++) or `deploy/repro_v2_full.cpp` (v2 C API); rebuild with CMake (or Makefile.repro for C++ only); Docker image rebuild picks up CMake. Set **AGORA_REPRO_IMPL=v2** to run the v2 binary.
+- **Adjust container security:** Edit **root** `docker-compose.yml` (cap_drop/ulimits) or `deploy/kubernetes/deployment.yaml` (securityContext.capabilities). Optional alternate: `deploy/docker-compose.yml`.
+- **Full env reference:** See `deploy/ENV.md`.
+- **Use a different SDK path:** Docker build arg `AGORA_SDK_DIR=...` (default `agora_rtc_sdk`); SDK arch should match image platform (e.g. linux/amd64).
 
 This file is the single place that ties together: what the repo is, why we have `deploy/`, how the issue works, and how the repro and deployments are supposed to be used.
