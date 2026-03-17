@@ -30,7 +30,12 @@ target_include_directories(repro_pthread_init PRIVATE
 )
 target_compile_definitions(repro_pthread_init PRIVATE TARGET_OS_LINUX)
 target_link_directories(repro_pthread_init PRIVATE "${AGORA_SDK_DIR}")
-target_link_libraries(repro_pthread_init PRIVATE pthread dl)
+target_link_libraries(repro_pthread_init PRIVATE
+  agora_rtc_sdk
+  pthread
+  dl
+  m
+)
 set_target_properties(repro_pthread_init PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
   BUILD_RPATH "${AGORA_SDK_DIR}"
