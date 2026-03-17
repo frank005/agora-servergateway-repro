@@ -107,6 +107,13 @@ docker run --rm --cap-add=SYS_NICE \
 
 ### Using an env file
 
+Copy the example env file and edit it with your credentials:
+
+```bash
+cp deploy/.env.example deploy/.env
+# Edit deploy/.env with your App ID, channel, token, etc.
+```
+
 Put your credentials in **`deploy/.env`** (same folder as `docker-compose.yml`). Example:
 
 ```bash
