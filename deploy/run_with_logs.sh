@@ -1,53 +1,96 @@
 #!/usr/bin/env bash
+# Run agora-repro container, wait for exit, copy SDK log to the host, then remove container.
+#
+# Usage (from repo root OR any directory):
+#   ./deploy/run_with_logs.sh [extra docker run args...]
+#
+# Host log destination (in order of precedence):
+#   1. AGORA_HOST_LOG_FILE set in your shell environment
+#   2. AGORA_HOST_LOG_FILE set in deploy/.env
+#   3. Default: <repo-root>/logs/agora_sdk.log
+#
+# In-container log path is always /app/agora_sdk.log (the SDK default).
 set -euo pipefail
 
-# Simple helper to run the agora-repro container, wait for it to finish,
-# then copy the SDK log file out to a host path.
-#
-# Usage (from repo root):
-#   # Host log path from env (default ./logs/agora_sdk.log):
-#   ./deploy/run_with_logs.sh [extra docker args...]
-#
-#   # Or override host log path just for this run:
-#   AGORA_HOST_LOG_FILE=/tmp/agora_sdk.log ./deploy/run_with_logs.sh
-#
-# The script:
-# - Uses AGORA_LOG_FILE inside the container (default /app/agora_sdk.log)
-# - Runs `docker run` with a temporary container name
-# - After the container exits, copies AGORA_LOG_FILE to the host path
-# - Finally removes the container
+# Resolve repo root (two levels up from this script, no matter where it's called from)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${SCRIPT_DIR}/.env"
 
-HOST_LOG_PATH="${AGORA_HOST_LOG_FILE:-./logs/agora_sdk.log}"
+# Helper: read a variable from the .env file, stripping quotes and inline comments
+read_env_var() {
+  local key="$1"
+  local default_val="${2:-}"
+  if [[ -f "${ENV_FILE}" ]]; then
+    local raw
+    raw=$(grep -E "^${key}[[:space:]]*=" "${ENV_FILE}" | tail -1 | cut -d= -f2-)
+    # Strip leading/trailing whitespace
+    raw="${raw#"${raw%%[![:space:]]*}"}"
+    raw="${raw%"${raw##*[![:space:]]}"}"
+    # Strip surrounding quotes (single or double)
+    raw="${raw#\'}" ; raw="${raw%\'}"
+    raw="${raw#\"}" ; raw="${raw%\"}"
+    # Strip inline comment
+    raw="${raw%%#*}"
+    # Strip trailing whitespace again after comment removal
+    raw="${raw%"${raw##*[![:space:]]}"}"
+    if [[ -n "${raw}" ]]; then
+      echo "${raw}"
+      return
+    fi
+  fi
+  echo "${default_val}"
+}
+
+IN_CONTAINER_LOG="/app/agora_sdk.log"
+
+# Host log path: shell env > .env file > default
+if [[ -n "${AGORA_HOST_LOG_FILE:-}" ]]; then
+  HOST_LOG_PATH="${AGORA_HOST_LOG_FILE}"
+else
+  HOST_LOG_PATH="$(read_env_var AGORA_HOST_LOG_FILE "${REPO_ROOT}/logs/agora_sdk.log")"
+fi
+
+# Make host path absolute (resolve relative paths against repo root)
+if [[ "${HOST_LOG_PATH}" != /* ]]; then
+  HOST_LOG_PATH="${REPO_ROOT}/${HOST_LOG_PATH}"
+fi
 
 IMAGE_NAME="${AGORA_REPRO_IMAGE:-agora-repro}"
 CONTAINER_NAME="agora-repro-logs-$$"
-IN_CONTAINER_LOG="${AGORA_LOG_FILE:-/app/agora_sdk.log}"
 
-echo "Running container ${CONTAINER_NAME} from image ${IMAGE_NAME}..."
-echo "  SDK log inside container: ${IN_CONTAINER_LOG}"
-echo "  Host log output: ${HOST_LOG_PATH}"
+echo "============================================================"
+echo "  image:         ${IMAGE_NAME}"
+echo "  container:     ${CONTAINER_NAME}"
+echo "  log (in):      ${IN_CONTAINER_LOG}"
+echo "  log (host):    ${HOST_LOG_PATH}"
+echo "============================================================"
 
+# Run (no --rm so we can docker cp after exit)
 set +e
-docker run --name "${CONTAINER_NAME}" \
-  --cap-add SYS_NICE --ulimit rtprio=0 \
-  --env-file deploy/.env \
+docker run \
+  --name "${CONTAINER_NAME}" \
+  --cap-drop=ALL \
+  --ulimit rtprio=0 \
+  --env-file "${ENV_FILE}" \
   -e "AGORA_LOG_FILE=${IN_CONTAINER_LOG}" \
   "$@" \
   "${IMAGE_NAME}"
 RUN_STATUS=$?
 set -e
 
-echo "Container exited with status ${RUN_STATUS}, copying log..."
+echo ""
+echo "Container exited (status=${RUN_STATUS}). Copying SDK log..."
 
 mkdir -p "$(dirname "${HOST_LOG_PATH}")"
 if docker cp "${CONTAINER_NAME}:${IN_CONTAINER_LOG}" "${HOST_LOG_PATH}" 2>/dev/null; then
-  echo "Copied SDK log to ${HOST_LOG_PATH}"
+  echo "SDK log copied -> ${HOST_LOG_PATH}"
+  ls -lh "${HOST_LOG_PATH}"
 else
-  echo "WARNING: Failed to copy ${IN_CONTAINER_LOG}" \
-       "from container (file may not exist or logging not enabled)." >&2
+  echo "WARNING: could not copy ${IN_CONTAINER_LOG} from container (file may not exist)." >&2
 fi
 
 docker rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+echo "Container removed."
 
 exit "${RUN_STATUS}"
-
