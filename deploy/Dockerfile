@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /workspace
 COPY ${AGORA_SDK_DIR} /workspace/agora_rtc_sdk
-COPY deploy/repro_pthread_init.cpp deploy/repro_v2.cpp deploy/CMakeLists.txt deploy/run_with_rtprio0.c deploy/fake_setschedparam.c /workspace/deploy/
+COPY deploy/repro_pthread_init.cpp deploy/repro_v2_full.cpp deploy/CMakeLists.txt deploy/run_with_rtprio0.c deploy/fake_setschedparam.c /workspace/deploy/
 
 WORKDIR /workspace/build
 RUN cmake ../deploy -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build . \
@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=builder /workspace/build/repro_pthread_init .
+COPY --from=builder /workspace/build/repro_v2_full .
 COPY --from=builder /workspace/build/run_with_rtprio0 .
 COPY --from=builder /workspace/build/fake_setschedparam.so /app/
 COPY --from=builder /workspace/agora_rtc_sdk/agora_sdk/*.so* /app/

@@ -37,17 +37,24 @@ target_link_libraries(repro_pthread_init PRIVATE
   m
 )
 
-# Experimental v2 + dlopen repro. This binary is NOT wired into Docker;
-# build locally via CMake and run as ./repro_v2_full to test.
+# v2 C API + dlopen/dlsym repro — no direct link dependency on libagora_rtc_sdk.
+# Headers included only for struct/typedef definitions; all SDK functions loaded via dlsym.
 add_executable(repro_v2_full repro_v2_full.cpp)
 target_include_directories(repro_v2_full PRIVATE
   "${AGORA_SDK_DIR}/include"
   "${AGORA_SDK_DIR}/include/c"
   "${AGORA_SDK_DIR}/include/c/base"
+  "${AGORA_SDK_DIR}/include/c/api2"
 )
 target_compile_definitions(repro_v2_full PRIVATE TARGET_OS_LINUX)
-target_link_libraries(repro_v2_full PRIVATE pthread dl)
+# Only link pthread and dl — libagora_rtc_sdk is loaded at runtime via dlopen.
+target_link_libraries(repro_v2_full PRIVATE pthread dl m)
 set_target_properties(repro_pthread_init PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+  BUILD_RPATH "${AGORA_SDK_DIR}"
+  INSTALL_RPATH "\$ORIGIN"
+)
+set_target_properties(repro_v2_full PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
   BUILD_RPATH "${AGORA_SDK_DIR}"
   INSTALL_RPATH "\$ORIGIN"
