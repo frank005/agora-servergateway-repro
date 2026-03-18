@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <gnu/libc-version.h>
 
 #define REPRO_BIN_CPP "/app/repro_pthread_init"
 #define REPRO_BIN_V2  "/app/repro_v2_full"
@@ -33,8 +34,14 @@ static void print_os_version(void) {
   fclose(f);
 }
 
+static void print_glibc_version(void) {
+  const char* v = gnu_get_libc_version();
+  if (v && v[0]) fprintf(stderr, "[entrypoint] glibc %s\n", v);
+}
+
 int main(int argc, char **argv) {
   print_os_version();
+  print_glibc_version();
 
   struct rlimit r = { 0, 0 };
   (void)setrlimit(RLIMIT_RTPRIO, &r);
