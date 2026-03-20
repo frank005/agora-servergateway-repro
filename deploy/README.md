@@ -67,7 +67,8 @@ You can pass your Agora credentials via **environment variables** so the repro j
 | `AGORA_APP_ID` | Your Agora App ID (required for init; also used as token if `AGORA_TOKEN` is not set) |
 | `AGORA_CHANNEL_ID` | Channel name to join. If set, the app connects after init. |
 | `AGORA_TOKEN` | Token for authenticated join (optional). If unset, the app uses the App ID (works only if the project has token auth disabled in Agora Console). |
-| `AGORA_UID` | Local user ID (optional; default `"0"`). |
+| `AGORA_UID` | Local user ID (optional; default `"0"`). Can be a **string user account** if you set `AGORA_USE_STRING_UID=1` (see `deploy/ENV.md`). |
+| `AGORA_USE_STRING_UID` | Set to `1` for string user account mode; then `AGORA_UID` is your account string (not limited to digits). |
 | `AGORA_JOIN_DURATION_SEC` | Seconds to stay in the channel; `0` = run until Ctrl+C (default `60`). |
 | `AGORA_RECEIVE_VIDEO` | Set to `1` to subscribe to and process remote video frames. |
 | `AGORA_SEND_AUDIO` | Set to `1` to publish local audio (440 Hz tone). |

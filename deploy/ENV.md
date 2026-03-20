@@ -9,7 +9,15 @@ All variables are optional unless noted. Use `deploy/.env` (or `--env-file deplo
 | `AGORA_APP_ID` | Agora App ID (required for init; used as token if `AGORA_TOKEN` is not set) | `dummy_app_id_for_repro` |
 | `AGORA_CHANNEL_ID` | Channel name to join. If set, the app connects after init. | (empty, no join) |
 | `AGORA_TOKEN` | Token for authenticated join. If unset, app uses App ID (when token auth disabled in project). | same as App ID |
-| `AGORA_UID` | Local user ID. | `0` |
+| `AGORA_UID` | Local user ID: numeric string (e.g. `0`, `12345`) in default mode, or **user account string** when `AGORA_USE_STRING_UID=1` (e.g. alphanumeric + allowed punctuation per Agora rules). | `0` |
+| `AGORA_USE_STRING_UID` | Set to `1` to enable **string user account** mode. Must match how the channel/token were set up (enable “user account / string UID” in Agora Console if your project requires it). Generate tokens for the **same** user identifier string. | `0` (off) |
+
+**String UID example** (in `deploy/.env`):
+
+```bash
+AGORA_USE_STRING_UID=1
+AGORA_UID=myserver_NJKERNJ34MKPS3P0S
+```
 
 ## Join duration and media
 

@@ -7,6 +7,7 @@
  *
  * All env vars, logs, and behavior identical to repro_pthread_init.cpp:
  *   AGORA_APP_ID, AGORA_CHANNEL_ID, AGORA_TOKEN (optional), AGORA_UID (optional)
+ *   AGORA_USE_STRING_UID=1  - string user account mode; AGORA_UID is the account string (enable in Agora Console if required)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
  *   AGORA_SEND_AUDIO=1    - publish local audio (440 Hz PCM tone, 16 kHz mono)
  *   AGORA_SEND_VIDEO=1    - publish local video (720p I420 badge pattern)
@@ -585,6 +586,7 @@ int main(int argc, char* argv[]) {
   std::string channelId(getenv_or("AGORA_CHANNEL_ID", ""));
   std::string token(getenv_or("AGORA_TOKEN", ""));
   std::string uid(getenv_or("AGORA_UID", "0"));
+  bool useStringUid   = getenv_bool("AGORA_USE_STRING_UID");
   bool receiveVideo   = getenv_bool("AGORA_RECEIVE_VIDEO");
   bool sendAudio      = getenv_bool("AGORA_SEND_AUDIO");
   bool sendVideo      = getenv_bool("AGORA_SEND_VIDEO");
@@ -653,7 +655,11 @@ int main(int argc, char* argv[]) {
   svc_cfg.enable_audio_processor = 1;
   svc_cfg.enable_audio_device    = 0;
   svc_cfg.enable_video           = (receiveVideo || sendVideo) ? 1 : 0;
-  svc_cfg.use_string_uid         = 0;
+  svc_cfg.use_string_uid         = useStringUid ? 1 : 0;
+  if (useStringUid)
+    fprintf(stderr, "AGORA_USE_STRING_UID=1: string user account mode; AGORA_UID=\"%s\"\n", uid.c_str());
+  else
+    fprintf(stderr, "Numeric UID mode (default); AGORA_UID=\"%s\" (set AGORA_USE_STRING_UID=1 for string account)\n", uid.c_str());
   svc_cfg.area_code              = 0xFFFFFFFF;  /* AREA_CODE_GLOB */
 
   fprintf(stderr, "Calling agora_service_initialize()...\n");

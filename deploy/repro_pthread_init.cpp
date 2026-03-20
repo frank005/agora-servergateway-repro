@@ -3,6 +3,7 @@
  *
  * Env vars:
  *   AGORA_APP_ID, AGORA_CHANNEL_ID, AGORA_TOKEN (optional), AGORA_UID (optional)
+ *   AGORA_USE_STRING_UID=1  - use string user account for join; set AGORA_UID to your account string (not only digits)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
  *   AGORA_SEND_AUDIO=1    - publish local audio (generated PCM, e.g. 440 Hz tone)
  *   AGORA_SEND_VIDEO=1    - publish local video (generated image, 720p)
@@ -414,6 +415,7 @@ int main(int argc, char* argv[]) {
   std::string channelId(getenv_or("AGORA_CHANNEL_ID", ""));
   std::string token(getenv_or("AGORA_TOKEN", ""));
   std::string uid(getenv_or("AGORA_UID", "0"));
+  bool useStringUid = getenv_bool("AGORA_USE_STRING_UID");
   bool receiveVideo = getenv_bool("AGORA_RECEIVE_VIDEO");
   bool sendAudio = getenv_bool("AGORA_SEND_AUDIO");
   bool sendVideo = getenv_bool("AGORA_SEND_VIDEO");
@@ -469,7 +471,11 @@ int main(int argc, char* argv[]) {
   config.enableAudioProcessor = 1;
   config.enableAudioDevice = 0;
   config.enableVideo = (receiveVideo || sendVideo) ? 1 : 0;
-  config.useStringUid = 0;
+  config.useStringUid = useStringUid ? 1 : 0;
+  if (useStringUid)
+    fprintf(stderr, "AGORA_USE_STRING_UID=1: string user account mode; AGORA_UID=\"%s\"\n", uid.c_str());
+  else
+    fprintf(stderr, "Numeric UID mode (default); AGORA_UID=\"%s\" (set AGORA_USE_STRING_UID=1 for string account)\n", uid.c_str());
   /* Optional: set deprecated threadPriority (0=LOWEST..5=CRITICAL). If SDK honors it, LOWEST/NORMAL might avoid RT. */
   const char* tp = getenv("AGORA_THREAD_PRIORITY");
   if (tp && tp[0]) {
