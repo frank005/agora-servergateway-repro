@@ -10,6 +10,7 @@
  *   AGORA_USE_STRING_UID=1  - string user account mode; AGORA_UID is the account string (enable in Agora Console if required)
  *   AGORA_REGISTER_AUDIO_OBSERVER=0|1  - register playback audio frame observer (default 1)
  *   AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0|1  - enable SDK audio volume indication callback (default 1)
+ *   AGORA_CLIENT_ROLE_TYPE=AUDIENCE|BROADCASTER (or 2|1) - client role override (default AUDIENCE)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
  *   AGORA_SEND_AUDIO=1    - publish local audio (440 Hz PCM tone, 16 kHz mono)
  *   AGORA_SEND_VIDEO=1    - publish local video (720p I420 badge pattern)
@@ -108,6 +109,19 @@ static int getenv_join_duration_sec(int defaultVal) {
   if (end == v || n < 0) return defaultVal;
   if (n > 86400) n = 86400;
   return (int)n;
+}
+
+/* CLIENT_ROLE_TYPE in C API: BROADCASTER=1, AUDIENCE=2 */
+static int parse_client_role_type(const char* role) {
+  if (!role || !role[0]) return 2; /* default AUDIENCE */
+  char* end = nullptr;
+  long n = strtol(role, &end, 10);
+  if (end != role && (n == 1 || n == 2)) return (int)n;
+  std::string r(role);
+  for (auto& c : r) if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+  if (r == "BROADCASTER") return 1;
+  if (r == "AUDIENCE") return 2;
+  return 2;
 }
 
 /* ============================================================
@@ -345,7 +359,6 @@ static std::atomic<uint64_t> g_audio_frames_received{0};
 static std::atomic<uint64_t> g_video_frames_received{0};
 static std::atomic<uint64_t> g_audio_volume_cb_count{0};
 
-static bool              g_receive_video = false;
 static bool              g_enable_audio_observer = true;
 static audio_frame_observer  g_audio_obs = {};
 static video_frame_observer2 g_vobs2_impl = {};
@@ -398,22 +411,16 @@ static void cb_on_video_frame(void* obs_handle, const char* channel_id, const ch
 static local_user_observer g_luser_obs = {};
 
 static void cb_on_user_audio_track_subscribed(void* local_user, const char* user_id, void* remote_audio_track) {
+  (void)local_user;
   (void)remote_audio_track;
   fprintf(stderr, "Subscribed to remote audio (user %s).\n", user_id ? user_id : "?");
-  if (g_enable_audio_observer && local_user && !g_audio_obs_registered) {
-    g_luser_reg_audio_obs(local_user, &g_audio_obs);
-    g_audio_obs_registered = true;
-  }
 }
 
 static void cb_on_user_video_track_subscribed(void* local_user, const char* user_id,
                                                const video_track_info* info, void* remote_video_track) {
+  (void)local_user;
   (void)info; (void)remote_video_track;
   fprintf(stderr, "Subscribed to remote video (user %s).\n", user_id ? user_id : "?");
-  if (local_user && g_receive_video && g_vobs2_handle && !g_video_obs_registered) {
-    g_luser_reg_video_obs(local_user, g_vobs2_handle);
-    g_video_obs_registered = true;
-  }
 }
 
 static void cb_on_audio_volume_indication(void* local_user, const audio_volume_info* speakers,
@@ -574,11 +581,13 @@ static void send_video_loop(VideoSendArgs a) {
 static void teardown_conn(void* local_user, void* conn,
                           void* send_audio_track, void* pcm_sender, void* audio_factory,
                           void* send_video_track, void* video_sender, void* video_factory) {
-  g_luser_unreg_obs(local_user);
-  if (g_audio_obs_registered) { g_luser_unreg_audio_obs(local_user); g_audio_obs_registered = false; }
-  if (g_video_obs_registered) { g_luser_unreg_video_obs(local_user, g_vobs2_handle); g_video_obs_registered = false; }
-  g_conn_unregister_obs(conn);
-  g_conn_disconnect(conn);
+  if (conn) g_conn_disconnect(conn);
+  if (local_user) {
+    g_luser_unreg_obs(local_user);
+    if (g_audio_obs_registered) { g_luser_unreg_audio_obs(local_user); g_audio_obs_registered = false; }
+    if (g_video_obs_registered) { g_luser_unreg_video_obs(local_user, g_vobs2_handle); g_video_obs_registered = false; }
+  }
+  if (conn) g_conn_unregister_obs(conn);
   if (g_vobs2_handle)  { g_vobs2_destroy(g_vobs2_handle); g_vobs2_handle = nullptr; }
   if (send_video_track)  g_video_track_destroy(send_video_track);
   if (video_sender)      g_video_sender_destroy(video_sender);
@@ -586,7 +595,7 @@ static void teardown_conn(void* local_user, void* conn,
   if (send_audio_track)  g_audio_track_destroy(send_audio_track);
   if (pcm_sender)        g_pcm_sender_destroy(pcm_sender);
   if (audio_factory)     g_factory_destroy(audio_factory);
-  g_conn_destroy(conn);
+  if (conn) g_conn_destroy(conn);
 }
 
 /* ============================================================
@@ -625,6 +634,8 @@ int main(int argc, char* argv[]) {
   std::string encModeStr(getenv_trimmed_or("AGORA_ENCRYPTION_MODE", ""));
   std::string encSecret(getenv_trimmed_or("AGORA_ENCRYPTION_SECRET", ""));
   std::string encSalt(getenv_trimmed_or("AGORA_ENCRYPTION_SALT", ""));
+  std::string clientRoleStr(getenv_trimmed_or("AGORA_CLIENT_ROLE_TYPE", "AUDIENCE"));
+  int clientRoleType = parse_client_role_type(clientRoleStr.c_str());
 
   fprintf(stderr, "[v2] repro_v2_full: v2 C API + dlopen/dlsym — parallel to repro_pthread_init.\n");
   fprintf(stderr, "Join duration: %d s (AGORA_JOIN_DURATION_SEC; 0=until Ctrl+C).\n", joinDurationSec);
@@ -747,7 +758,8 @@ int main(int argc, char* argv[]) {
             channelId.c_str(), uid.c_str(), receiveVideo?1:0, sendAudio?1:0, sendVideo?1:0);
 
     rtc_conn_config conn_cfg = {};
-    conn_cfg.client_role_type             = (sendAudio || sendVideo) ? 1 : 2; /* BROADCASTER=1 AUDIENCE=2 */
+    conn_cfg.client_role_type             = clientRoleType; /* BROADCASTER=1 AUDIENCE=2 */
+    fprintf(stderr, "Client role: %s (%d)\n", (clientRoleType == 1) ? "BROADCASTER" : "AUDIENCE", clientRoleType);
     conn_cfg.auto_subscribe_audio         = 1;
     conn_cfg.auto_subscribe_video         = receiveVideo ? 1 : 0;
     conn_cfg.enable_audio_recording_or_playout = 0;
@@ -774,7 +786,13 @@ int main(int argc, char* argv[]) {
     g_conn_register_obs(conn, &g_conn_obs);
 
     void* local_user = g_conn_get_local_user(conn);
-    g_receive_video = receiveVideo;
+    if (!local_user) {
+      fprintf(stderr, "agora_rtc_conn_get_local_user() returned null\n");
+      g_conn_unregister_obs(conn);
+      g_conn_disconnect(conn);
+      g_conn_destroy(conn);
+      if (g_svc_at_exit) g_svc_at_exit(svc); g_svc_release(svc); dlclose(lib); return 1;
+    }
 
     g_luser_sub_all_audio(local_user);
     if (receiveVideo) {
@@ -814,16 +832,29 @@ int main(int argc, char* argv[]) {
         g_audio_obs_registered = true;
         fprintf(stderr, "Audio observer registered.\n");
       } else {
-        fprintf(stderr, "agora_local_user_register_audio_frame_observer() failed %d; will retry on remote subscribe.\n", aor);
+        fprintf(stderr, "agora_local_user_register_audio_frame_observer() failed %d\n", aor);
       }
     } else {
       fprintf(stderr, "AGORA_REGISTER_AUDIO_OBSERVER=0: audio observer registration disabled.\n");
     }
 
-    /* Video frame observer (needs handle via agora_video_frame_observer2_create) */
-    memset(&g_vobs2_impl, 0, sizeof(g_vobs2_impl));
-    g_vobs2_impl.on_frame = cb_on_video_frame;
-    g_vobs2_handle = g_vobs2_create(&g_vobs2_impl);
+    /* Video frame observer (create only when video receive is requested) */
+    if (receiveVideo) {
+      memset(&g_vobs2_impl, 0, sizeof(g_vobs2_impl));
+      g_vobs2_impl.on_frame = cb_on_video_frame;
+      g_vobs2_handle = g_vobs2_create(&g_vobs2_impl);
+      if (g_vobs2_handle) {
+        int vor = g_luser_reg_video_obs(local_user, g_vobs2_handle);
+        if (vor == 0) {
+          g_video_obs_registered = true;
+          fprintf(stderr, "Video observer registered.\n");
+        } else {
+          fprintf(stderr, "agora_local_user_register_video_frame_observer() failed %d\n", vor);
+        }
+      } else {
+        fprintf(stderr, "agora_video_frame_observer2_create() returned null\n");
+      }
+    }
 
     /* Local user observer */
     memset(&g_luser_obs, 0, sizeof(g_luser_obs));

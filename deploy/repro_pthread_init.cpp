@@ -6,6 +6,7 @@
  *   AGORA_USE_STRING_UID=1  - use string user account for join; set AGORA_UID to your account string (not only digits)
  *   AGORA_REGISTER_AUDIO_OBSERVER=0|1 - register playback audio frame observer (default 1)
  *   AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0|1 - enable SDK audio volume indication callback (default 1)
+ *   AGORA_CLIENT_ROLE_TYPE=AUDIENCE|BROADCASTER (or 2|1) - client role override (default AUDIENCE)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
  *   AGORA_SEND_AUDIO=1    - publish local audio (generated PCM, e.g. 440 Hz tone)
  *   AGORA_SEND_VIDEO=1    - publish local video (generated image, 720p)
@@ -143,6 +144,18 @@ static int parse_encryption_mode(const char* mode) {
 
 static bool encryption_mode_needs_salt(int mode) {
   return mode == (int)agora::rtc::AES_128_GCM2 || mode == (int)agora::rtc::AES_256_GCM2;
+}
+
+static agora::rtc::CLIENT_ROLE_TYPE parse_client_role_type(const char* role) {
+  if (!role || !role[0]) return agora::rtc::CLIENT_ROLE_AUDIENCE;
+  char* end = nullptr;
+  long n = strtol(role, &end, 10);
+  if (end != role && (n == 1 || n == 2))
+    return (n == 1) ? agora::rtc::CLIENT_ROLE_BROADCASTER : agora::rtc::CLIENT_ROLE_AUDIENCE;
+  std::string r(role);
+  for (auto& c : r) if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+  if (r == "BROADCASTER") return agora::rtc::CLIENT_ROLE_BROADCASTER;
+  return agora::rtc::CLIENT_ROLE_AUDIENCE;
 }
 
 /* Plain-text Agora SDK log writer so logs are readable (setLogFile writes binary). */
@@ -455,6 +468,8 @@ int main(int argc, char* argv[]) {
   std::string encryptionModeStr(getenv_trimmed_or("AGORA_ENCRYPTION_MODE", ""));
   std::string encryptionSecret(getenv_trimmed_or("AGORA_ENCRYPTION_SECRET", ""));
   std::string encryptionSalt(getenv_trimmed_or("AGORA_ENCRYPTION_SALT", ""));
+  std::string clientRoleStr(getenv_trimmed_or("AGORA_CLIENT_ROLE_TYPE", "AUDIENCE"));
+  auto clientRoleType = parse_client_role_type(clientRoleStr.c_str());
   fprintf(stderr, "Join duration: %d s (AGORA_JOIN_DURATION_SEC; 0=until Ctrl+C).\n", joinDurationSec);
   if (!stopAfter.empty())
     fprintf(stderr, "Bisect mode: will stop after '%s' (AGORA_REPRO_STOP_AFTER).\n", stopAfter.c_str());
@@ -580,7 +595,10 @@ int main(int argc, char* argv[]) {
             channelId.c_str(), uid.c_str(), receiveVideo ? 1 : 0, sendAudio ? 1 : 0, sendVideo ? 1 : 0);
 
     agora::rtc::RtcConnectionConfiguration ccfg;
-    ccfg.clientRoleType = (sendAudio || sendVideo) ? agora::rtc::CLIENT_ROLE_BROADCASTER : agora::rtc::CLIENT_ROLE_AUDIENCE;
+    ccfg.clientRoleType = clientRoleType;
+    fprintf(stderr, "Client role: %s (%d)\n",
+            (clientRoleType == agora::rtc::CLIENT_ROLE_BROADCASTER) ? "BROADCASTER" : "AUDIENCE",
+            (int)clientRoleType);
     ccfg.autoSubscribeAudio = true;
     ccfg.autoSubscribeVideo = receiveVideo;
     ccfg.enableAudioRecordingOrPlayout = false;
