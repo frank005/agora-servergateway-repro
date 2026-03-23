@@ -9,6 +9,7 @@
  *   AGORA_APP_ID, AGORA_CHANNEL_ID, AGORA_TOKEN (optional), AGORA_UID (optional)
  *   AGORA_USE_STRING_UID=1  - string user account mode; AGORA_UID is the account string (enable in Agora Console if required)
  *   AGORA_REGISTER_AUDIO_OBSERVER=0|1  - register playback audio frame observer (default 1)
+ *   AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0|1  - enable SDK audio volume indication callback (default 1)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
  *   AGORA_SEND_AUDIO=1    - publish local audio (440 Hz PCM tone, 16 kHz mono)
  *   AGORA_SEND_VIDEO=1    - publish local video (720p I420 badge pattern)
@@ -212,6 +213,7 @@ typedef void* (*pfn_agora_rtc_conn_get_local_user)(void*);
 typedef int   (*pfn_agora_local_user_subscribe_all_audio)(void*);
 typedef int   (*pfn_agora_local_user_subscribe_all_video)(void*, const video_subscription_options*);
 typedef int   (*pfn_agora_local_user_set_playback_audio_frame_parameters)(void*, unsigned int, unsigned int, int, int);
+typedef int   (*pfn_agora_local_user_set_audio_volume_indication_parameters)(void*, int, int, bool);
 typedef int   (*pfn_agora_local_user_register_audio_frame_observer)(void*, audio_frame_observer*);
 typedef int   (*pfn_agora_local_user_unregister_audio_frame_observer)(void*);
 typedef int   (*pfn_agora_local_user_register_observer)(void*, local_user_observer*);
@@ -258,6 +260,7 @@ static pfn_agora_rtc_conn_get_local_user                        g_conn_get_local
 static pfn_agora_local_user_subscribe_all_audio                 g_luser_sub_all_audio = nullptr;
 static pfn_agora_local_user_subscribe_all_video                 g_luser_sub_all_video = nullptr;
 static pfn_agora_local_user_set_playback_audio_frame_parameters g_luser_set_playback_params = nullptr;
+static pfn_agora_local_user_set_audio_volume_indication_parameters g_luser_set_volume_indication = nullptr;
 static pfn_agora_local_user_register_audio_frame_observer       g_luser_reg_audio_obs = nullptr;
 static pfn_agora_local_user_unregister_audio_frame_observer     g_luser_unreg_audio_obs = nullptr;
 static pfn_agora_local_user_register_observer                   g_luser_reg_obs = nullptr;
@@ -316,6 +319,7 @@ static int load_symbols(void* lib) {
   LOAD_SYM(lib, "agora_local_user_subscribe_all_audio",            pfn_agora_local_user_subscribe_all_audio,            g_luser_sub_all_audio);
   LOAD_SYM(lib, "agora_local_user_subscribe_all_video",            pfn_agora_local_user_subscribe_all_video,            g_luser_sub_all_video);
   LOAD_SYM(lib, "agora_local_user_set_playback_audio_frame_parameters", pfn_agora_local_user_set_playback_audio_frame_parameters, g_luser_set_playback_params);
+  LOAD_SYM(lib, "agora_local_user_set_audio_volume_indication_parameters", pfn_agora_local_user_set_audio_volume_indication_parameters, g_luser_set_volume_indication);
   LOAD_SYM(lib, "agora_local_user_register_audio_frame_observer",  pfn_agora_local_user_register_audio_frame_observer,  g_luser_reg_audio_obs);
   LOAD_SYM(lib, "agora_local_user_unregister_audio_frame_observer", pfn_agora_local_user_unregister_audio_frame_observer, g_luser_unreg_audio_obs);
   LOAD_SYM(lib, "agora_local_user_register_observer",              pfn_agora_local_user_register_observer,              g_luser_reg_obs);
@@ -339,6 +343,7 @@ static int load_symbols(void* lib) {
 
 static std::atomic<uint64_t> g_audio_frames_received{0};
 static std::atomic<uint64_t> g_video_frames_received{0};
+static std::atomic<uint64_t> g_audio_volume_cb_count{0};
 
 static bool              g_receive_video = false;
 static bool              g_enable_audio_observer = true;
@@ -408,6 +413,18 @@ static void cb_on_user_video_track_subscribed(void* local_user, const char* user
   if (local_user && g_receive_video && g_vobs2_handle && !g_video_obs_registered) {
     g_luser_reg_video_obs(local_user, g_vobs2_handle);
     g_video_obs_registered = true;
+  }
+}
+
+static void cb_on_audio_volume_indication(void* local_user, const audio_volume_info* speakers,
+                                          unsigned int speaker_number, int total_volume) {
+  (void)local_user;
+  uint64_t n = ++g_audio_volume_cb_count;
+  if (n % 10 == 0) {
+    const char* top_uid = (speaker_number > 0 && speakers && speakers[0].user_id) ? speakers[0].user_id : "-";
+    unsigned int top_vol = (speaker_number > 0 && speakers) ? speakers[0].volume : 0;
+    fprintf(stderr, "[audio-volume] callbacks=%llu speakers=%u total=%d top_uid=%s top_vol=%u\n",
+            (unsigned long long)n, speaker_number, total_volume, top_uid, top_vol);
   }
 }
 
@@ -594,6 +611,11 @@ int main(int argc, char* argv[]) {
     const char* rao = getenv("AGORA_REGISTER_AUDIO_OBSERVER");
     if (rao && rao[0]) registerAudioObserver = getenv_bool("AGORA_REGISTER_AUDIO_OBSERVER");
   }
+  bool enableAudioVolumeIndication = true;
+  {
+    const char* eavi = getenv("AGORA_ENABLE_AUDIO_VOLUME_INDICATION");
+    if (eavi && eavi[0]) enableAudioVolumeIndication = getenv_bool("AGORA_ENABLE_AUDIO_VOLUME_INDICATION");
+  }
   bool receiveVideo   = getenv_bool("AGORA_RECEIVE_VIDEO");
   bool sendAudio      = getenv_bool("AGORA_SEND_AUDIO");
   bool sendVideo      = getenv_bool("AGORA_SEND_VIDEO");
@@ -766,6 +788,13 @@ int main(int argc, char* argv[]) {
       g_conn_destroy(conn);
       if (g_svc_at_exit) g_svc_at_exit(svc); g_svc_release(svc); dlclose(lib); return 1;
     }
+    if (enableAudioVolumeIndication) {
+      int vir = g_luser_set_volume_indication(local_user, 1000, 3, false);
+      if (vir == 0) fprintf(stderr, "Audio volume indication enabled (interval=1000ms smooth=3 vad=0).\n");
+      else fprintf(stderr, "agora_local_user_set_audio_volume_indication_parameters() failed %d\n", vir);
+    } else {
+      fprintf(stderr, "AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0: audio volume indication disabled.\n");
+    }
 
     /* Audio frame observer */
     memset(&g_audio_obs, 0, sizeof(g_audio_obs));
@@ -800,6 +829,7 @@ int main(int argc, char* argv[]) {
     memset(&g_luser_obs, 0, sizeof(g_luser_obs));
     g_luser_obs.on_user_audio_track_subscribed = cb_on_user_audio_track_subscribed;
     g_luser_obs.on_user_video_track_subscribed = cb_on_user_video_track_subscribed;
+    g_luser_obs.on_audio_volume_indication = cb_on_audio_volume_indication;
     g_luser_reg_obs(local_user, &g_luser_obs);
 
     /* ------ Encryption ------ */

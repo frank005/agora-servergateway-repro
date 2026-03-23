@@ -70,6 +70,7 @@ You can pass your Agora credentials via **environment variables** so the repro j
 | `AGORA_UID` | Local user ID (optional; default `"0"`). Can be a **string user account** if you set `AGORA_USE_STRING_UID=1` (see `deploy/ENV.md`). |
 | `AGORA_USE_STRING_UID` | Set to `1` for string user account mode; then `AGORA_UID` is your account string (not limited to digits). |
 | `AGORA_REGISTER_AUDIO_OBSERVER` | Set to `1` (default) to register playback audio observer callbacks; set `0` to disable audio observer registration. |
+| `AGORA_ENABLE_AUDIO_VOLUME_INDICATION` | Set to `1` (default) to enable audio volume indication callbacks; set `0` to disable. |
 | `AGORA_JOIN_DURATION_SEC` | Seconds to stay in the channel; `0` = run until Ctrl+C (default `60`). |
 | `AGORA_RECEIVE_VIDEO` | Set to `1` to subscribe to and process remote video frames. |
 | `AGORA_SEND_AUDIO` | Set to `1` to publish local audio (440 Hz tone). |

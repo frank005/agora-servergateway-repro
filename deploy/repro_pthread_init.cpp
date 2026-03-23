@@ -5,6 +5,7 @@
  *   AGORA_APP_ID, AGORA_CHANNEL_ID, AGORA_TOKEN (optional), AGORA_UID (optional)
  *   AGORA_USE_STRING_UID=1  - use string user account for join; set AGORA_UID to your account string (not only digits)
  *   AGORA_REGISTER_AUDIO_OBSERVER=0|1 - register playback audio frame observer (default 1)
+ *   AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0|1 - enable SDK audio volume indication callback (default 1)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
  *   AGORA_SEND_AUDIO=1    - publish local audio (generated PCM, e.g. 440 Hz tone)
  *   AGORA_SEND_VIDEO=1    - publish local video (generated image, 720p)
@@ -288,7 +289,16 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
                                     agora::rtc::REMOTE_VIDEO_STATE, agora::rtc::REMOTE_VIDEO_STATE_REASON, int) override {}
   void onFirstRemoteVideoFrameRendered(agora::user_id_t, int, int, int) override {}
   void onRemoteVideoTrackStatistics(agora::agora_refptr<agora::rtc::IRemoteVideoTrack>, const agora::rtc::RemoteVideoTrackStats&) override {}
-  void onAudioVolumeIndication(const agora::rtc::AudioVolumeInformation*, unsigned int, int) override {}
+  void onAudioVolumeIndication(const agora::rtc::AudioVolumeInformation* speakers, unsigned int speakerNumber, int totalVolume) override {
+    static std::atomic<uint64_t> cbCount{0};
+    uint64_t n = ++cbCount;
+    if (n % 10 == 0) {
+      const char* topUid = (speakerNumber > 0 && speakers && speakers[0].userId) ? speakers[0].userId : "-";
+      unsigned int topVol = (speakerNumber > 0 && speakers) ? speakers[0].volume : 0;
+      fprintf(stderr, "[audio-volume] callbacks=%llu speakers=%u total=%d top_uid=%s top_vol=%u\n",
+              (unsigned long long)n, speakerNumber, totalVolume, topUid, topVol);
+    }
+  }
   void onActiveSpeaker(agora::user_id_t) override {}
   void onAudioSubscribeStateChanged(const char*, agora::user_id_t, agora::rtc::STREAM_SUBSCRIBE_STATE, agora::rtc::STREAM_SUBSCRIBE_STATE, int) override {}
   void onVideoSubscribeStateChanged(const char*, agora::user_id_t, agora::rtc::STREAM_SUBSCRIBE_STATE, agora::rtc::STREAM_SUBSCRIBE_STATE, int) override {}
@@ -430,6 +440,11 @@ int main(int argc, char* argv[]) {
   {
     const char* rao = getenv("AGORA_REGISTER_AUDIO_OBSERVER");
     if (rao && rao[0]) registerAudioObserver = getenv_bool("AGORA_REGISTER_AUDIO_OBSERVER");
+  }
+  bool enableAudioVolumeIndication = true;
+  {
+    const char* eavi = getenv("AGORA_ENABLE_AUDIO_VOLUME_INDICATION");
+    if (eavi && eavi[0]) enableAudioVolumeIndication = getenv_bool("AGORA_ENABLE_AUDIO_VOLUME_INDICATION");
   }
   bool receiveVideo = getenv_bool("AGORA_RECEIVE_VIDEO");
   bool sendAudio = getenv_bool("AGORA_SEND_AUDIO");
@@ -591,6 +606,13 @@ int main(int argc, char* argv[]) {
       connection = nullptr;
       service->release();
       return 1;
+    }
+    if (enableAudioVolumeIndication) {
+      int vir = localUser->setAudioVolumeIndicationParameters(1000, 3, false);
+      if (vir == 0) fprintf(stderr, "Audio volume indication enabled (interval=1000ms smooth=3 vad=0).\n");
+      else fprintf(stderr, "setAudioVolumeIndicationParameters() failed %d\n", vir);
+    } else {
+      fprintf(stderr, "AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0: audio volume indication disabled.\n");
     }
 
     /* Enable built-in encryption before connect if requested. Must match other clients in channel (same mode, key, salt). */
