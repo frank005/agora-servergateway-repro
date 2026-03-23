@@ -10,7 +10,6 @@
  *   AGORA_USE_STRING_UID=1  - string user account mode; AGORA_UID is the account string (enable in Agora Console if required)
  *   AGORA_REGISTER_AUDIO_OBSERVER=0|1  - register playback audio frame observer (default 1)
  *   AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0|1  - enable SDK audio volume indication callback (default 1)
- *   AGORA_CLIENT_ROLE_TYPE=AUDIENCE|BROADCASTER (or 2|1) - client role override (default AUDIENCE)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
  *   AGORA_SEND_AUDIO=1    - publish local audio (440 Hz PCM tone, 16 kHz mono)
  *   AGORA_SEND_VIDEO=1    - publish local video (720p I420 badge pattern)
@@ -111,18 +110,6 @@ static int getenv_join_duration_sec(int defaultVal) {
   return (int)n;
 }
 
-/* CLIENT_ROLE_TYPE in C API: BROADCASTER=1, AUDIENCE=2 */
-static int parse_client_role_type(const char* role) {
-  if (!role || !role[0]) return 2; /* default AUDIENCE */
-  char* end = nullptr;
-  long n = strtol(role, &end, 10);
-  if (end != role && (n == 1 || n == 2)) return (int)n;
-  std::string r(role);
-  for (auto& c : r) if (c >= 'a' && c <= 'z') c = (char)(c - 32);
-  if (r == "BROADCASTER") return 1;
-  if (r == "AUDIENCE") return 2;
-  return 2;
-}
 
 /* ============================================================
  * Base64 decode (identical to repro_pthread_init.cpp)
@@ -634,8 +621,6 @@ int main(int argc, char* argv[]) {
   std::string encModeStr(getenv_trimmed_or("AGORA_ENCRYPTION_MODE", ""));
   std::string encSecret(getenv_trimmed_or("AGORA_ENCRYPTION_SECRET", ""));
   std::string encSalt(getenv_trimmed_or("AGORA_ENCRYPTION_SALT", ""));
-  std::string clientRoleStr(getenv_trimmed_or("AGORA_CLIENT_ROLE_TYPE", "AUDIENCE"));
-  int clientRoleType = parse_client_role_type(clientRoleStr.c_str());
 
   fprintf(stderr, "[v2] repro_v2_full: v2 C API + dlopen/dlsym — parallel to repro_pthread_init.\n");
   fprintf(stderr, "Join duration: %d s (AGORA_JOIN_DURATION_SEC; 0=until Ctrl+C).\n", joinDurationSec);
@@ -758,8 +743,7 @@ int main(int argc, char* argv[]) {
             channelId.c_str(), uid.c_str(), receiveVideo?1:0, sendAudio?1:0, sendVideo?1:0);
 
     rtc_conn_config conn_cfg = {};
-    conn_cfg.client_role_type             = clientRoleType; /* BROADCASTER=1 AUDIENCE=2 */
-    fprintf(stderr, "Client role: %s (%d)\n", (clientRoleType == 1) ? "BROADCASTER" : "AUDIENCE", clientRoleType);
+    /* Do not force client_role_type; keep SDK default behavior. */
     conn_cfg.auto_subscribe_audio         = 1;
     conn_cfg.auto_subscribe_video         = receiveVideo ? 1 : 0;
     conn_cfg.enable_audio_recording_or_playout = 0;
