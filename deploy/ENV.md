@@ -25,6 +25,7 @@ AGORA_UID=myserver_NJKERNJ34MKPS3P0S
 |----------|-------------|---------|
 | `AGORA_JOIN_DURATION_SEC` | Seconds to stay in channel; `0` = until Ctrl+C. | `60` |
 | `AGORA_RECEIVE_VIDEO` | `1` = subscribe to remote video; `0` = audio only. | `0` |
+| `AGORA_REGISTER_AUDIO_OBSERVER` | `1` = register playback audio frame observer (logs remote audio callback frames); `0` = disable observer registration. | `1` |
 | `AGORA_SEND_AUDIO` | `1` = publish local audio (440 Hz tone); `0` = no publish. | `0` |
 | `AGORA_SEND_VIDEO` | `1` = publish local video (720p @ 15 fps); `0` = no publish. | `0` |
 

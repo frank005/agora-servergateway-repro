@@ -4,6 +4,7 @@
  * Env vars:
  *   AGORA_APP_ID, AGORA_CHANNEL_ID, AGORA_TOKEN (optional), AGORA_UID (optional)
  *   AGORA_USE_STRING_UID=1  - use string user account for join; set AGORA_UID to your account string (not only digits)
+ *   AGORA_REGISTER_AUDIO_OBSERVER=0|1 - register playback audio frame observer (default 1)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
  *   AGORA_SEND_AUDIO=1    - publish local audio (generated PCM, e.g. 440 Hz tone)
  *   AGORA_SEND_VIDEO=1    - publish local video (generated image, 720p)
@@ -227,8 +228,13 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
  public:
   MinimalLocalUserObserver(agora::rtc::ILocalUser* user,
                            agora::media::IAudioFrameObserverBase* audioObs,
-                           agora::rtc::IVideoFrameObserver2* videoObs)
-      : local_user_(user), audio_observer_(audioObs), video_observer_(videoObs), cleaned_up_(false) {
+                           agora::rtc::IVideoFrameObserver2* videoObs,
+                           bool enableAudioObserver,
+                           bool audioObserverAlreadyRegistered)
+      : local_user_(user), audio_observer_(audioObs), video_observer_(videoObs),
+        enable_audio_observer_(enableAudioObserver),
+        audio_observer_registered_(audioObserverAlreadyRegistered),
+        cleaned_up_(false) {
     local_user_->registerLocalUserObserver(this);
   }
   ~MinimalLocalUserObserver() override { teardown(); }
@@ -237,7 +243,7 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
     if (cleaned_up_) return;
     cleaned_up_ = true;
     if (local_user_) {
-      if (audio_observer_) local_user_->unregisterAudioFrameObserver(audio_observer_);
+      if (audio_observer_ && audio_observer_registered_) local_user_->unregisterAudioFrameObserver(audio_observer_);
       if (video_observer_) local_user_->unregisterVideoFrameObserver(video_observer_);
       local_user_->unregisterLocalUserObserver(this);
     }
@@ -248,8 +254,10 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
                                   agora::agora_refptr<agora::rtc::IRemoteAudioTrack> audioTrack) override {
     (void)userId;
     (void)audioTrack;
-    if (local_user_ && audio_observer_)
+    if (enable_audio_observer_ && local_user_ && audio_observer_ && !audio_observer_registered_) {
       local_user_->registerAudioFrameObserver(audio_observer_);
+      audio_observer_registered_ = true;
+    }
     fprintf(stderr, "Subscribed to remote audio (user %s).\n", userId);
   }
 
@@ -296,6 +304,8 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
   agora::rtc::ILocalUser* local_user_;
   agora::media::IAudioFrameObserverBase* audio_observer_;
   agora::rtc::IVideoFrameObserver2* video_observer_;
+  bool enable_audio_observer_;
+  bool audio_observer_registered_;
   bool cleaned_up_;
 };
 
@@ -416,6 +426,11 @@ int main(int argc, char* argv[]) {
   std::string token(getenv_or("AGORA_TOKEN", ""));
   std::string uid(getenv_or("AGORA_UID", "0"));
   bool useStringUid = getenv_bool("AGORA_USE_STRING_UID");
+  bool registerAudioObserver = true;
+  {
+    const char* rao = getenv("AGORA_REGISTER_AUDIO_OBSERVER");
+    if (rao && rao[0]) registerAudioObserver = getenv_bool("AGORA_REGISTER_AUDIO_OBSERVER");
+  }
   bool receiveVideo = getenv_bool("AGORA_RECEIVE_VIDEO");
   bool sendAudio = getenv_bool("AGORA_SEND_AUDIO");
   bool sendVideo = getenv_bool("AGORA_SEND_VIDEO");
@@ -642,7 +657,20 @@ int main(int argc, char* argv[]) {
 
     PlaybackAudioObserver playbackAudioObs;
     PlaybackVideoObserver playbackVideoObs;
-    MinimalLocalUserObserver userObserver(localUser, &playbackAudioObs, receiveVideo ? &playbackVideoObs : nullptr);
+    bool audioObserverPreRegistered = false;
+    if (registerAudioObserver) {
+      int aor = localUser->registerAudioFrameObserver(&playbackAudioObs);
+      if (aor == 0) {
+        audioObserverPreRegistered = true;
+        fprintf(stderr, "Audio observer registered.\n");
+      } else {
+        fprintf(stderr, "registerAudioFrameObserver() failed %d; will retry after remote audio subscribe.\n", aor);
+      }
+    } else {
+      fprintf(stderr, "AGORA_REGISTER_AUDIO_OBSERVER=0: audio observer registration disabled.\n");
+    }
+    MinimalLocalUserObserver userObserver(localUser, &playbackAudioObs, receiveVideo ? &playbackVideoObs : nullptr,
+                                          registerAudioObserver, audioObserverPreRegistered);
 
     /* Optional: custom send audio track */
     agora::agora_refptr<agora::rtc::ILocalAudioTrack> sendAudioTrack;

@@ -8,6 +8,7 @@
  * All env vars, logs, and behavior identical to repro_pthread_init.cpp:
  *   AGORA_APP_ID, AGORA_CHANNEL_ID, AGORA_TOKEN (optional), AGORA_UID (optional)
  *   AGORA_USE_STRING_UID=1  - string user account mode; AGORA_UID is the account string (enable in Agora Console if required)
+ *   AGORA_REGISTER_AUDIO_OBSERVER=0|1  - register playback audio frame observer (default 1)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
  *   AGORA_SEND_AUDIO=1    - publish local audio (440 Hz PCM tone, 16 kHz mono)
  *   AGORA_SEND_VIDEO=1    - publish local video (720p I420 badge pattern)
@@ -340,6 +341,7 @@ static std::atomic<uint64_t> g_audio_frames_received{0};
 static std::atomic<uint64_t> g_video_frames_received{0};
 
 static bool              g_receive_video = false;
+static bool              g_enable_audio_observer = true;
 static audio_frame_observer  g_audio_obs = {};
 static video_frame_observer2 g_vobs2_impl = {};
 static void*             g_vobs2_handle = nullptr;
@@ -393,7 +395,7 @@ static local_user_observer g_luser_obs = {};
 static void cb_on_user_audio_track_subscribed(void* local_user, const char* user_id, void* remote_audio_track) {
   (void)remote_audio_track;
   fprintf(stderr, "Subscribed to remote audio (user %s).\n", user_id ? user_id : "?");
-  if (local_user && !g_audio_obs_registered) {
+  if (g_enable_audio_observer && local_user && !g_audio_obs_registered) {
     g_luser_reg_audio_obs(local_user, &g_audio_obs);
     g_audio_obs_registered = true;
   }
@@ -587,6 +589,11 @@ int main(int argc, char* argv[]) {
   std::string token(getenv_or("AGORA_TOKEN", ""));
   std::string uid(getenv_or("AGORA_UID", "0"));
   bool useStringUid   = getenv_bool("AGORA_USE_STRING_UID");
+  bool registerAudioObserver = true;
+  {
+    const char* rao = getenv("AGORA_REGISTER_AUDIO_OBSERVER");
+    if (rao && rao[0]) registerAudioObserver = getenv_bool("AGORA_REGISTER_AUDIO_OBSERVER");
+  }
   bool receiveVideo   = getenv_bool("AGORA_RECEIVE_VIDEO");
   bool sendAudio      = getenv_bool("AGORA_SEND_AUDIO");
   bool sendVideo      = getenv_bool("AGORA_SEND_VIDEO");
@@ -603,6 +610,7 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "Bisect mode: will stop after '%s' (AGORA_REPRO_STOP_AFTER).\n", stopAfter.c_str());
 
   if (token.empty()) token = appId;
+  g_enable_audio_observer = registerAudioObserver;
 
   /* ------ 0. dlopen + dlsym ------ */
   fprintf(stderr, "0. Loading Agora SDK via dlopen (v2 C API, dlsym only — no -lagora_rtc_sdk link)...\n");
@@ -771,6 +779,17 @@ int main(int argc, char* argv[]) {
     g_audio_obs.on_get_record_audio_frame_param      = cb_on_get_record_audio_frame_param;
     g_audio_obs.on_get_mixed_audio_frame_param       = cb_on_get_mixed_audio_frame_param;
     g_audio_obs.on_get_ear_monitoring_audio_frame_param = cb_on_get_ear_monitoring_audio_frame_param;
+    if (g_enable_audio_observer) {
+      int aor = g_luser_reg_audio_obs(local_user, &g_audio_obs);
+      if (aor == 0) {
+        g_audio_obs_registered = true;
+        fprintf(stderr, "Audio observer registered.\n");
+      } else {
+        fprintf(stderr, "agora_local_user_register_audio_frame_observer() failed %d; will retry on remote subscribe.\n", aor);
+      }
+    } else {
+      fprintf(stderr, "AGORA_REGISTER_AUDIO_OBSERVER=0: audio observer registration disabled.\n");
+    }
 
     /* Video frame observer (needs handle via agora_video_frame_observer2_create) */
     memset(&g_vobs2_impl, 0, sizeof(g_vobs2_impl));
