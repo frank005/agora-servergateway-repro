@@ -15,6 +15,11 @@ All variables are optional unless noted. Use `deploy/.env` (or `--env-file deplo
 | `AGORA_CLIENT_ROLE_TYPE` | Client role value when enabled: `AUDIENCE` or `BROADCASTER` (or `2`/`1`). | `AUDIENCE` |
 | `AGORA_SET_CHANNEL_PROFILE` | `1` = set channel profile on connection config; `0` = do not set profile field. | `0` |
 | `AGORA_CHANNEL_PROFILE` | Channel profile value when enabled: `COMMUNICATION` or `LIVE_BROADCASTING` (or `0`/`1`). | `COMMUNICATION` |
+| `AGORA_REGISTER_CONN_OBSERVER` | `1` = register v2 `rtc_conn_observer` callbacks; `0` = do not register (default, more stable). | `0` |
+| `AGORA_REGISTER_LOCAL_USER_OBSERVER` | `1` = register v2 `local_user_observer`; `0` = do not register (default, more stable). | `0` |
+| `AGORA_LU_CB_AUDIO_SUB` | v2 only; when local-user observer is enabled, gate `on_user_audio_track_subscribed` callback. | `1` |
+| `AGORA_LU_CB_VIDEO_SUB` | v2 only; when local-user observer is enabled, gate `on_user_video_track_subscribed` callback. | `1` |
+| `AGORA_LU_CB_VOLUME_IND` | v2 only; when local-user observer is enabled, gate `on_audio_volume_indication` callback. Known crash trigger in current runtime/SDK combo; keep disabled unless testing. | `0` |
 
 **String UID example** (in `deploy/.env`):
 

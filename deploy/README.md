@@ -73,6 +73,8 @@ You can pass your Agora credentials via **environment variables** so the repro j
 | `AGORA_CLIENT_ROLE_TYPE` | Client role value when enabled: `AUDIENCE` or `BROADCASTER` (also accepts `2` / `1`). |
 | `AGORA_SET_CHANNEL_PROFILE` | Set to `1` to set channel profile in connection config; set `0` (default) to skip setting this field. |
 | `AGORA_CHANNEL_PROFILE` | Channel profile value when enabled: `COMMUNICATION` or `LIVE_BROADCASTING` (also accepts `0` / `1`). |
+| `AGORA_REGISTER_CONN_OBSERVER` | v2 only: set to `1` to register `rtc_conn_observer` callbacks; `0` (default) leaves them unregistered for stability. |
+| `AGORA_REGISTER_LOCAL_USER_OBSERVER` | v2 only: set to `1` to register `local_user_observer` callbacks; `0` (default) leaves them unregistered for stability. |
 | `AGORA_REGISTER_AUDIO_OBSERVER` | Set to `1` (default) to register playback audio observer callbacks; set `0` to disable audio observer registration. |
 | `AGORA_ENABLE_AUDIO_VOLUME_INDICATION` | Set to `1` (default) to enable audio volume indication callbacks; set `0` to disable. |
 | `AGORA_JOIN_DURATION_SEC` | Seconds to stay in the channel; `0` = run until Ctrl+C (default `60`). |
