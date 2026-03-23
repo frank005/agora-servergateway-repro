@@ -69,6 +69,10 @@ You can pass your Agora credentials via **environment variables** so the repro j
 | `AGORA_TOKEN` | Token for authenticated join (optional). If unset, the app uses the App ID (works only if the project has token auth disabled in Agora Console). |
 | `AGORA_UID` | Local user ID (optional; default `"0"`). Can be a **string user account** if you set `AGORA_USE_STRING_UID=1` (see `deploy/ENV.md`). |
 | `AGORA_USE_STRING_UID` | Set to `1` for string user account mode; then `AGORA_UID` is your account string (not limited to digits). |
+| `AGORA_SET_CLIENT_ROLE_TYPE` | Set to `1` (default) to set client role in connection config; set `0` to skip setting this field. |
+| `AGORA_CLIENT_ROLE_TYPE` | Client role value when enabled: `AUDIENCE` or `BROADCASTER` (also accepts `2` / `1`). |
+| `AGORA_SET_CHANNEL_PROFILE` | Set to `1` to set channel profile in connection config; set `0` (default) to skip setting this field. |
+| `AGORA_CHANNEL_PROFILE` | Channel profile value when enabled: `COMMUNICATION` or `LIVE_BROADCASTING` (also accepts `0` / `1`). |
 | `AGORA_REGISTER_AUDIO_OBSERVER` | Set to `1` (default) to register playback audio observer callbacks; set `0` to disable audio observer registration. |
 | `AGORA_ENABLE_AUDIO_VOLUME_INDICATION` | Set to `1` (default) to enable audio volume indication callbacks; set `0` to disable. |
 | `AGORA_JOIN_DURATION_SEC` | Seconds to stay in the channel; `0` = run until Ctrl+C (default `60`). |

@@ -6,6 +6,10 @@
  *   AGORA_USE_STRING_UID=1  - use string user account for join; set AGORA_UID to your account string (not only digits)
  *   AGORA_REGISTER_AUDIO_OBSERVER=0|1 - register playback audio frame observer (default 1)
  *   AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0|1 - enable SDK audio volume indication callback (default 1)
+ *   AGORA_SET_CHANNEL_PROFILE=0|1  - whether to set channelProfile on connection config (default 0)
+ *   AGORA_CHANNEL_PROFILE=COMMUNICATION|LIVE_BROADCASTING (or 0|1)
+ *   AGORA_SET_CLIENT_ROLE_TYPE=0|1 - whether to set clientRoleType on connection config (default 1)
+ *   AGORA_CLIENT_ROLE_TYPE=AUDIENCE|BROADCASTER (or 2|1)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
  *   AGORA_SEND_AUDIO=1    - publish local audio (generated PCM, e.g. 440 Hz tone)
  *   AGORA_SEND_VIDEO=1    - publish local video (generated image, 720p)
@@ -143,6 +147,30 @@ static int parse_encryption_mode(const char* mode) {
 
 static bool encryption_mode_needs_salt(int mode) {
   return mode == (int)agora::rtc::AES_128_GCM2 || mode == (int)agora::rtc::AES_256_GCM2;
+}
+
+static agora::CHANNEL_PROFILE_TYPE parse_channel_profile(const char* profile) {
+  if (!profile || !profile[0]) return agora::CHANNEL_PROFILE_COMMUNICATION;
+  char* end = nullptr;
+  long n = strtol(profile, &end, 10);
+  if (end != profile && (n == 0 || n == 1))
+    return (n == 1) ? agora::CHANNEL_PROFILE_LIVE_BROADCASTING : agora::CHANNEL_PROFILE_COMMUNICATION;
+  std::string p(profile);
+  for (auto& c : p) if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+  if (p == "LIVE_BROADCASTING" || p == "LIVE") return agora::CHANNEL_PROFILE_LIVE_BROADCASTING;
+  return agora::CHANNEL_PROFILE_COMMUNICATION;
+}
+
+static agora::rtc::CLIENT_ROLE_TYPE parse_client_role_type(const char* role) {
+  if (!role || !role[0]) return agora::rtc::CLIENT_ROLE_AUDIENCE;
+  char* end = nullptr;
+  long n = strtol(role, &end, 10);
+  if (end != role && (n == 1 || n == 2))
+    return (n == 1) ? agora::rtc::CLIENT_ROLE_BROADCASTER : agora::rtc::CLIENT_ROLE_AUDIENCE;
+  std::string r(role);
+  for (auto& c : r) if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+  if (r == "BROADCASTER") return agora::rtc::CLIENT_ROLE_BROADCASTER;
+  return agora::rtc::CLIENT_ROLE_AUDIENCE;
 }
 
 
@@ -447,6 +475,18 @@ int main(int argc, char* argv[]) {
     const char* eavi = getenv("AGORA_ENABLE_AUDIO_VOLUME_INDICATION");
     if (eavi && eavi[0]) enableAudioVolumeIndication = getenv_bool("AGORA_ENABLE_AUDIO_VOLUME_INDICATION");
   }
+  bool setChannelProfile = false;
+  {
+    const char* scp = getenv("AGORA_SET_CHANNEL_PROFILE");
+    if (scp && scp[0]) setChannelProfile = getenv_bool("AGORA_SET_CHANNEL_PROFILE");
+  }
+  auto channelProfile = parse_channel_profile(getenv_trimmed_or("AGORA_CHANNEL_PROFILE", "COMMUNICATION").c_str());
+  bool setClientRoleType = true;
+  {
+    const char* scr = getenv("AGORA_SET_CLIENT_ROLE_TYPE");
+    if (scr && scr[0]) setClientRoleType = getenv_bool("AGORA_SET_CLIENT_ROLE_TYPE");
+  }
+  auto clientRoleType = parse_client_role_type(getenv_trimmed_or("AGORA_CLIENT_ROLE_TYPE", "AUDIENCE").c_str());
   bool receiveVideo = getenv_bool("AGORA_RECEIVE_VIDEO");
   bool sendAudio = getenv_bool("AGORA_SEND_AUDIO");
   bool sendVideo = getenv_bool("AGORA_SEND_VIDEO");
@@ -581,7 +621,20 @@ int main(int argc, char* argv[]) {
             channelId.c_str(), uid.c_str(), receiveVideo ? 1 : 0, sendAudio ? 1 : 0, sendVideo ? 1 : 0);
 
     agora::rtc::RtcConnectionConfiguration ccfg;
-    /* Do not force clientRoleType; keep SDK default behavior. */
+    if (setClientRoleType) {
+      ccfg.clientRoleType = clientRoleType;
+      fprintf(stderr, "Set clientRoleType=%d (%s)\n", (int)clientRoleType,
+              (clientRoleType == agora::rtc::CLIENT_ROLE_BROADCASTER) ? "BROADCASTER" : "AUDIENCE");
+    } else {
+      fprintf(stderr, "AGORA_SET_CLIENT_ROLE_TYPE=0: not setting clientRoleType.\n");
+    }
+    if (setChannelProfile) {
+      ccfg.channelProfile = channelProfile;
+      fprintf(stderr, "Set channelProfile=%d (%s)\n", (int)channelProfile,
+              (channelProfile == agora::CHANNEL_PROFILE_LIVE_BROADCASTING) ? "LIVE_BROADCASTING" : "COMMUNICATION");
+    } else {
+      fprintf(stderr, "AGORA_SET_CHANNEL_PROFILE=0: not setting channelProfile.\n");
+    }
     ccfg.autoSubscribeAudio = true;
     ccfg.autoSubscribeVideo = receiveVideo;
     ccfg.enableAudioRecordingOrPlayout = false;

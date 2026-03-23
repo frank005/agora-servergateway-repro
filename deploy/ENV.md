@@ -11,6 +11,10 @@ All variables are optional unless noted. Use `deploy/.env` (or `--env-file deplo
 | `AGORA_TOKEN` | Token for authenticated join. If unset, app uses App ID (when token auth disabled in project). | same as App ID |
 | `AGORA_UID` | Local user ID: numeric string (e.g. `0`, `12345`) in default mode, or **user account string** when `AGORA_USE_STRING_UID=1` (e.g. alphanumeric + allowed punctuation per Agora rules). | `0` |
 | `AGORA_USE_STRING_UID` | Set to `1` to enable **string user account** mode. Must match how the channel/token were set up (enable “user account / string UID” in Agora Console if your project requires it). Generate tokens for the **same** user identifier string. | `0` (off) |
+| `AGORA_SET_CLIENT_ROLE_TYPE` | `1` = set client role on connection config; `0` = do not set role field. | `1` |
+| `AGORA_CLIENT_ROLE_TYPE` | Client role value when enabled: `AUDIENCE` or `BROADCASTER` (or `2`/`1`). | `AUDIENCE` |
+| `AGORA_SET_CHANNEL_PROFILE` | `1` = set channel profile on connection config; `0` = do not set profile field. | `0` |
+| `AGORA_CHANNEL_PROFILE` | Channel profile value when enabled: `COMMUNICATION` or `LIVE_BROADCASTING` (or `0`/`1`). | `COMMUNICATION` |
 
 **String UID example** (in `deploy/.env`):
 
