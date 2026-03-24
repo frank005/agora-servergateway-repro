@@ -7,7 +7,6 @@
 
 // This header file is included by both high level and low level APIs,
 #pragma once  // NOLINT(build/header_guard)
-#define SDK_BUILD_NUM ( 675648 )
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -1615,6 +1614,14 @@ enum MAX_USER_ACCOUNT_LENGTH_TYPE {
   /** The maximum length of the user account is 256 bytes.
    */
   MAX_USER_ACCOUNT_LENGTH = 256
+};
+
+/** The maximum length of the custom user info.
+ */
+enum MAX_CUSTOM_USER_INFO_LENGTH_TYPE {
+  /** The maximum length of the custom user info is 1024 bytes.
+   */
+  MAX_CUSTOM_USER_INFO_LENGTH = 1024
 };
 
 /**
@@ -5150,7 +5157,22 @@ struct AudioTrackConfig {
    */
   bool enableLocalPlayback;
 
-  AudioTrackConfig() : enableLocalPlayback(true) {}
+  /**
+   * Total additional audio duration (in milliseconds) to be sent gradually over multiple 10ms isochronous intervals.
+   * This parameter implements the "isochronous transmission with controlled preload" strategy:
+   * - The total extra data (set by this value) will be evenly distributed across consecutive 10ms intervals
+   * - Example: If set to 2000ms (2s), the SDK will automatically send a small extra amount in each 10ms interval 
+   *   (e.g., 60ms per interval) until the total 2000ms extra is completed (≈400ms total transmission time)
+   * - The value must be a multiple of 10ms. Any remainder will be automatically truncated:
+   *   - 25ms → 20ms (truncates 5ms remainder)
+   *   - 255ms → 250ms (truncates 5ms remainder)
+   * - Benefits: Quickly fills receiver's jitter buffer without overwhelming IoT device memory
+   * Default: 0 (no extra data, equivalent to standard isochronous transmission)
+   * Valid range: ≥ 0 (non-negative integer, automatically adjusted to nearest lower multiple of 10)
+   */
+   int totalExtraSendMs;
+
+  AudioTrackConfig() : enableLocalPlayback(true), totalExtraSendMs(0) {}
 };
 
 /**
@@ -6419,7 +6441,12 @@ struct UserInfo {
    */
   char userAccount[MAX_USER_ACCOUNT_LENGTH];
 
-  UserInfo() : uid(0) { userAccount[0] = '\0'; }
+  /**
+   * The custom user info. The maximum data length is `MAX_CUSTOM_USER_INFO_LENGTH`.
+   */
+  char customUserInfo[MAX_CUSTOM_USER_INFO_LENGTH];
+
+  UserInfo() : uid(0) { userAccount[0] = '\0'; customUserInfo[0] = '\0'; }
 };
 
 /**

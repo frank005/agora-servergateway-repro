@@ -19,6 +19,7 @@ extern "C" {
 AGORA_API_C_INT agora_audio_pcm_data_sender_send(AGORA_HANDLE agora_audio_pcm_data_sender,
                                                               const void* audio_data,
                                                               uint32_t capture_timestamp,
+                                                              int64_t presentation_ms,
                                                               const uint32_t samples_per_channel,  // for 10ms Data, number_of_samples * 100 = sample_rate
                                                               const uint32_t bytes_per_sample,     // 2 * number_of_channels
                                                               const uint32_t number_of_channels,
@@ -130,6 +131,7 @@ AGORA_API_C_INT agora_media_ctrl_packet_sender_send_broadcast(AGORA_HANDLE agora
 typedef struct _audio_sink {
   /* return value stands for a 'bool' in C++: 1 for success, 0 for failure */
   int (*on_audio_frame)(AGORA_HANDLE agora_audio_sink, const audio_pcm_frame* frame);
+  void* user_data;
 } audio_sink;
 
 /**

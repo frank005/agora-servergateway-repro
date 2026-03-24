@@ -290,6 +290,47 @@ typedef struct _local_user_observer {
   void (*on_audio_meta_data_received)(AGORA_HANDLE agora_local_user, user_id_t userId, const char* meta_data, size_t length);
 } local_user_observer;
 
+typedef struct _capability_item {
+  uint8_t id;
+  const char* name;
+} capability_item;
+
+typedef struct _capability_item_map {
+  capability_item* item;
+  size_t size;
+} capability_item_map;
+
+typedef struct  _capabilities {
+  capability_item_map* item_map;
+  /*
+  enum class CapabilityType : uint8_t {
+  kChannelProfile = 0,
+  kAudioCodec,     //1
+  kVideoCodec,     //2
+  kH264Feature,    //3
+  kVideoFec,       //4
+  kWebrtc,         //5
+  kP2P,            //6
+  kAudioRsfec,     //7
+  kRtpExtension,   //8
+  kAudio2InAut,   // 9
+  kVp8Feature,    // 10
+  kSvc,           // 11
+  kDmecVersion,   // 12
+  kMultipleRedundancy,  //13
+  kBframe,   // 14
+  kMinorStream,  // 15
+  //WEB_CLIENT_ABSENCE, // 16 reserved for VOS
+  kCodecWithRqfec = 17, // 17
+  kAudioNonClockedStreaming = 19, // 19
+};
+  */
+  int capability_type;
+} capabilities;
+
+typedef struct _capabilites_observer{
+  void (*on_capabilities_changed)(AGORA_HANDLE agora_capabilites_observer, const capabilities* caps, int size);
+} capabilites_observer;
 /*
  * @ANNOTATION:TYPE:OBSERVER
  */
@@ -534,7 +575,18 @@ AGORA_API_C_INT agora_local_user_send_intra_request(AGORA_HANDLE agora_local_use
  */
 AGORA_API_C_INT agora_local_user_send_audio_meta_data(AGORA_HANDLE agora_local_user, const char* meta_data, size_t length);
 
+AGORA_API_C_HDL agora_local_user_capabilities_observer_create(capabilites_observer* observer);
 
+AGORA_API_C_VOID agora_local_user_capabilities_observer_destory(AGORA_HANDLE observer);
+/**
+ * @ANNOTATION:GROUP:agora_local_user
+ */
+AGORA_API_C_INT agora_local_user_register_capabilities_observer(AGORA_HANDLE agora_local_user, AGORA_HANDLE observer);
+
+/**
+ * @ANNOTATION:GROUP:agora_local_user
+ */
+AGORA_API_C_INT agora_local_user_unregister_capabilities_observer(AGORA_HANDLE agora_local_user, AGORA_HANDLE observer);
 #ifdef __cplusplus
 }
 #endif  // __cplusplus

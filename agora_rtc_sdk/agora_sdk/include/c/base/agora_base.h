@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -86,6 +87,10 @@ typedef struct _encoded_audio_frame_info {
    * The number of channels of the audio frame.
    */
   int number_of_channels;
+  /**
+   * This is a input parameter which means the timestamp for capturing the audio frame.
+   */
+  int64_t capture_time_ms;
 
 } encoded_audio_frame_info;
 
@@ -152,6 +157,11 @@ typedef struct _encoded_video_frame_info {
    * The stream type of video frame.
    */
   int stream_type;
+  /**
+  * The presentation timestamp (PTS) of the video frame (ms).
+  * @technical preview
+  */
+  int64_t presentation_ms;
 } encoded_video_frame_info;
 
 typedef struct _encoded_audio_frame_rev_info{
@@ -1466,6 +1476,71 @@ typedef struct _client_role_options {
   */
   int audience_latency_level;
 } client_role_options;
+
+/** The local proxy mode type. */
+typedef enum _LOCAL_PROXY_MODE {
+  /** 0: Connect local proxy with high priority, if not connected to local proxy, fallback to sdrtn.
+   */
+  LOCAL_PROXY_MODE_CONNECTIVITY_FIRST = 0,
+  /** 1: Only connect local proxy
+   */
+  LOCAL_PROXY_MODE_LOCAL_ONLY = 1,
+} LOCAL_PROXY_MODE;
+
+typedef struct _log_upload_server_info {
+  /** Log upload server domain
+   */
+  const char* server_domain;
+  /** Log upload server path
+   */
+  const char* server_path;
+  /** Log upload server port
+   */
+  int server_port;
+  /** Whether to use HTTPS request:
+    - true: Use HTTPS request
+    - fasle: Use HTTP request
+   */
+  bool server_https;
+} log_upload_server_info;
+
+typedef struct _advanced_config_info {
+  /** Log upload server
+   */
+  log_upload_server_info log_upload_server_info;
+} advanced_config_info;
+
+typedef struct _local_access_point_configuration {
+  /** Local access point IP address list.
+   */
+  const char** ip_list;
+  /** The number of local access point IP address.
+   */
+  int ip_list_size;
+  /** Local access point domain list.
+   */
+  const char** domain_list;
+  /** The number of local access point domain.
+   */
+  int domain_list_size;
+  /** Certificate domain name installed on specific local access point. pass "" means using sni
+   * domain on specific local access point SNI(Server Name Indication) is an extension to the TLS
+   * protocol.
+   */
+  const char* verify_domain_name;
+  /** Local proxy connection mode, connectivity first or local only.
+   */
+  LOCAL_PROXY_MODE mode;
+  /** Local proxy connection, advanced Config info.
+   */
+  advanced_config_info advanced_config_info;
+  /**
+    * Whether to disable vos-aut:
+    - true: (Default)disable vos-aut.
+    - false: not disable vos-aut
+  */
+  bool disable_aut;
+} local_access_point_configuration;
 
 #ifdef __cplusplus
 }

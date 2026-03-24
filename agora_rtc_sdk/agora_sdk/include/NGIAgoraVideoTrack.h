@@ -9,6 +9,7 @@
 #pragma once  // NOLINT(build/header_guard)
 
 #include "AgoraBase.h"
+#include "AgoraMediaBase.h"
 #include <api/aosl_ref.h>
 
 #ifndef OPTIONAL_OVERRIDE
@@ -448,6 +449,26 @@ class ILocalVideoTrack : public IVideoTrack {
   virtual bool getStatistics(LocalVideoTrackStats& stats) = 0;
 
   virtual VideoTrackType getType() OPTIONAL_OVERRIDE { return LOCAL_VIDEO_TRACK; }
+    /**
+   * Registers an \ref agora::rtc::IVideoMetadataObserver "IVideoMetadataObserver" object.
+   * @param metadataObserver The pointer to the `IVideoMetadataObserver` object.
+   * @return
+   * - 0: Success.
+   * - < 0: Failure.
+   */
+  virtual int registerVideoMetadataObserver(IMetadataObserver* metadataObserver, aosl_ref_t ares = AOSL_REF_INVALID) {
+    return 0;
+  }
+  /**
+   * Unregisters an \ref agora::rtc::IVideoMetadataObserver "IVideoMetadataObserver" object.
+   * @param metadataObserver The pointer to the `IVideoMetadataObserver` object.
+   * @return
+   * - 0: Success.
+   * - < 0: Failure.
+   */
+  virtual int unregisterVideoMetadataObserver(IMetadataObserver* metadataObserver) {
+     return 0;
+  }
 
  protected:
   ~ILocalVideoTrack() {}

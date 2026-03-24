@@ -128,16 +128,51 @@ enum VIDEO_SOURCE_TYPE {
   VIDEO_SOURCE_UNKNOWN = 100
 };
 
+/**
+ * The definition of the MixerLayoutConfig struct.
+ */
 struct MixerLayoutConfig {
+  /*
+  * The x-coordinate of the top-left corner of the video region in the mixed video stream.
+  */
   int32_t x;
+  /*
+  * The y-coordinate of the top-left corner of the video region in the mixed video stream.
+  */
   int32_t y;
+  /*
+  * The width of the video region in the mixed video stream.
+  */
   int32_t width;
+  /*
+  * The height of the video region in the mixed video stream.
+  */
   int32_t height;
-  int32_t zOrder; // larger zOrder prioritizes smaller ones
+  /*
+  * The z-order of the video region in the mixed video stream.
+  * The higher the value, the higher the layer.
+  */
+  int32_t zOrder;
+  /*
+  * The alpha value of the video region in the mixed video stream.
+  */
   float alpha;
+  /*
+  * Whether to mirror the video region in the mixed video stream.
+  */
   bool mirror;
-  const char* image_path; // url of the place holder picture
-  int rotation; // 0: none, 1: 90°, 2: 180°, 3: 270°
+  /*
+  * The URL of the placeholder picture.
+  */
+  const char* image_path;
+  /*
+  * The rotation of the video region in the mixed video stream.
+  *  - 0: no rotation.
+  *  - 1: 90° clockwise.
+  *  - 2: 180° clockwise.
+  *  - 3: 270° clockwise.
+  */
+  int rotation;
 
   MixerLayoutConfig() : x(0), y(0), width(0), height(0), zOrder(0), alpha(1.0), mirror(false), image_path(NULL),rotation(0) {}
   MixerLayoutConfig(int ox, int oy, int w, int h, int order) : x(ox), y(oy), width(w), height(h), zOrder(order), alpha(1.0), mirror(false), image_path(NULL), rotation(0) {}
@@ -238,6 +273,107 @@ enum RAW_AUDIO_FRAME_OP_MODE_TYPE {
   RAW_AUDIO_FRAME_OP_MODE_READ_WRITE = 2,
 };
 
+/** Definition of IMetadataObserver
+*/
+class IMetadataObserver {
+public:
+    virtual ~IMetadataObserver() {}
+
+    /**
+     * @brief Metadata type of the observer. We only support video metadata for now.
+     */
+    enum METADATA_TYPE
+    {
+        /**
+         * -1: The type of metadata is unknown.
+         */
+        UNKNOWN_METADATA = -1,
+        /**
+         * 0: The type of metadata is video.
+         */
+        VIDEO_METADATA = 0,
+    };
+    /**
+      * The maximum metadata size.
+      */
+    enum MAX_METADATA_SIZE_TYPE
+    {
+        INVALID_METADATA_SIZE_IN_BYTE = -1,
+        DEFAULT_METADATA_SIZE_IN_BYTE = 512,
+        MAX_METADATA_SIZE_IN_BYTE = 1024
+    };
+
+    /**
+     * @brief Media metadata.
+     */
+    struct Metadata
+    {
+        /**
+         * The channel name.
+         */
+        const char* channelId;
+        /**
+         * The user ID.
+         * - For the recipient: The ID of the remote user who sent the `Metadata`.
+         * - For the sender: Ignore it.
+         */
+        unsigned int uid;
+        /**
+         * The buffer size of the sent or received `Metadata`.
+         */
+        unsigned int size;
+        /**
+         * The buffer address of the received `Metadata`.
+         */
+        unsigned char *buffer;
+        /**
+         * The timestamp (ms) of when the `Metadata` is sent.
+         */
+        long long timeStampMs;
+
+          Metadata() : channelId(NULL), uid(0), size(0), buffer(NULL), timeStampMs(0) {}
+    };
+
+    /**
+     * @brief Occurs when the SDK requests the maximum size of the metadata.
+     *
+     * @details
+     * After successfully complete the registration by calling `registerMediaMetadataObserver`, the SDK
+     * triggers this callback once every video frame is sent. You need to specify the maximum size of
+     * the metadata in the return value of this callback.
+     *
+     * @return
+     * The maximum size of the `buffer` of the metadata that you want to use. The highest value is 1024
+     * bytes. Ensure that you set the return value.
+     */
+    virtual int getMaxMetadataSize() { return DEFAULT_METADATA_SIZE_IN_BYTE; }
+
+    /**
+     * @brief Occurs when the SDK is ready to send metadata.
+     *
+     * @details
+     * This callback is triggered when the SDK is ready to send metadata.
+     *
+     * @note Ensure that the size of the metadata does not exceed the value set in the
+     * `getMaxMetadataSize` callback.
+     *
+     * @param source_type Video data type. See `VIDEO_SOURCE_TYPE`.
+     * @param metadata The metadata that the user wants to send. See `Metadata`.
+     *
+     * @return
+     * - `true`: Send the video frame.
+     * - `false`: Do not send the video frame.
+     */
+    virtual bool onReadyToSendMetadata(Metadata &metadata, VIDEO_SOURCE_TYPE source_type) = 0;
+
+    /**
+     * @brief Occurs when the local user receives the metadata.
+     *
+     * @param metadata The metadata received. See `Metadata`.
+     *
+     */
+    virtual void onMetadataReceived(const Metadata& metadata) = 0;
+};
 }  // namespace rtc
 
 namespace media {

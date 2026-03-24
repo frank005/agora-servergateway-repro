@@ -80,6 +80,23 @@ typedef struct _agora_service_config {
    * - `0`: connect to servers with no limit
    */
   int domain_limit;
+  /**The log file path, default is NULL for default log path
+   */
+  const char* log_file_path;
+  /** The log file size, KB , set 2048KB to use default log size
+   */
+  uint32_t log_file_size_kb;
+  /** The log level, set LOG_LEVEL_INFO to use default log level
+   */
+  int log_level;
+  /**
+   * The config file path, default is NULL for default config path
+   */
+  const char* config_dir;
+  /**
+   * The data file path, default is NULL for default data path
+   */
+  const char* data_dir;
 } agora_service_config;
 
 /**
@@ -276,6 +293,12 @@ AGORA_API_C_HDL agora_service_create_custom_audio_track_pcm(AGORA_HANDLE agora_s
  * @ANNOTATION:GROUP:agora_service
  * @ANNOTATION:CTOR:agora_local_audio_track
  */
+AGORA_API_C_HDL agora_service_create_direct_custom_audio_track_pcm(AGORA_HANDLE agora_svc, AGORA_HANDLE agora_audio_pcm_data_sender /* pointer to RefPtrHolder */);
+
+/**
+ * @ANNOTATION:GROUP:agora_service
+ * @ANNOTATION:CTOR:agora_local_audio_track
+ */
 AGORA_API_C_HDL agora_service_create_custom_audio_track_encoded(AGORA_HANDLE agora_svc, AGORA_HANDLE agora_audio_encoded_frame_sender, int mix_mode);
 
 /**
@@ -415,6 +438,11 @@ AGORA_API_C_INT agora_service_disable_extension(AGORA_HANDLE agora_svc, const ch
  * @ANNOTATION:GROUP:agora_service
  */
 AGORA_API_C_HDL agora_service_get_agora_parameter(AGORA_HANDLE agora_svc);
+
+/**
+ * @ANNOTATION:GROUP:agora_service
+ */
+AGORA_API_C_INT agora_service_set_local_access_point(AGORA_HANDLE agora_svc, const local_access_point_configuration* config);
 
 #ifdef __cplusplus
 }

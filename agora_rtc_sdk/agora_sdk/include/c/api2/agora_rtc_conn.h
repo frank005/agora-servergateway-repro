@@ -171,6 +171,7 @@ typedef struct _rtc_conn_observer {
   void (*on_stream_message_error)(AGORA_HANDLE agora_rtc_conn, user_id_t user_id, int stream_id, int code, int missed, int cached);
   void (*on_encryption_error)(AGORA_HANDLE agora_rtc_conn, int error_type);
   void (*on_upload_log_result)(AGORA_HANDLE agora_rtc_conn, const char* request_id, int success, int reason);
+  void (*on_custom_user_info_updated)(AGORA_HANDLE agora_rtc_conn, user_id_t user_id, const char* custom_user_info);
 } rtc_conn_observer;
 
 /*

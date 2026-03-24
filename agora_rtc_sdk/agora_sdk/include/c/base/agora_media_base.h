@@ -236,6 +236,14 @@ typedef struct _video_frame {
 // Stereo, 32 kHz, 60 ms (2 * 32 * 60)
 #define k_max_data_size_samples 3840
 
+typedef struct _audio_label {
+  int far_filed_flag;
+  int rms;
+  int voice_prob;
+  int music_prob;
+  int pitch;
+} audio_label;
+
 typedef struct _audio_pcm_frame {
   uint32_t capture_timestamp;
   uint32_t samples_per_channel;
@@ -243,6 +251,8 @@ typedef struct _audio_pcm_frame {
   uint32_t num_channels;
   uint32_t bytes_per_sample;
   int16_t data[k_max_data_size_samples];
+  /** Audio Frame Label. */
+  audio_label audio_label;
 } audio_pcm_frame;
 
 // '2' is the size of above audio_pcm_frame.data[0]
@@ -346,8 +356,33 @@ typedef struct _audio_frame {
    * This timestamp is for audio stream rendering. Set it as 0.
    */
   int64_t render_time_ms;
+  /**
+   * A reserved parameter.
+   *
+   * You can use this presentationMs parameter to indicate the presenation milisecond timestamp,
+   * this will then filled into audio4 extension part, the remote side could use this pts in av
+   * sync process with video frame.
+   */
   int avsync_type;
-  
+
+  /**
+   * The pts timestamp of this audio frame.
+   *
+   * This timestamp is used to indicate the origin pts time of the frame, and sync with video
+   * frame by the pts time stamp
+   */
+  int64_t presentation_ms;
+
+  /**
+   * The number of the audio track.
+   */
+  int audio_track_number;
+
+  /**
+   * RTP timestamp of the first sample in the audio frame
+   */
+  uint32_t rtp_timestamp;
+
   int far_filed_flag;
   int rms;
   int voice_prob;

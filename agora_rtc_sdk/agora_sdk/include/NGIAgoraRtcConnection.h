@@ -287,6 +287,15 @@ class IRtcConnection : public RefCountInterface {
    * @param token The pointer to the new token.
    */
   virtual int renewToken(const char* token, aosl_ref_t ares = AOSL_REF_INVALID) = 0;
+  /**
+   * Set the custom information of the channel.
+   *
+   * @param customInfo The pointer to the custom information.
+   * @return
+   * - 0: Success.
+   * - < 0: Failure.
+   */
+  virtual int setLocalCustomUserInfo(const char* customInfo, aosl_ref_t ares = AOSL_REF_INVALID) = 0;
 
   /**
    * Gets the connection information.
@@ -497,6 +506,18 @@ class IRtcConnection : public RefCountInterface {
    * - < 0: Failure.
    */
   virtual int getUserInfoByUid(uid_t uid, rtc::UserInfo* userInfo) = 0;
+
+  /** Set local uplink and downlink qos value manually.
+   *
+   * @param uplinkQos  Manually specify the uplink quality value 
+   * @param downlinkQos  Manually specify the downlink quality value
+   * 
+   * * @return
+   * - 0: Success.
+   * - < 0: Failure.
+   *
+   */
+  virtual int setLocalQos(int uplinkQos, int downlinkQos) = 0;
 };
 
 /**
@@ -540,6 +561,15 @@ class IRtcConnectionObserver {
 
   // This should be deleted. onConnected is enough.
   virtual void onReconnected(const TConnectionInfo& connectionInfo, CONNECTION_CHANGED_REASON_TYPE reason) = 0;
+
+  /**
+   * Occurs when the user information is updated.
+   *
+   * @param userId The ID of the remote user who updates the custom user info.
+   * @param customUserInfo The custom user info.
+   */
+  virtual void onCustomUserInfoUpdated(user_id_t userId,
+                                       const char* customUserInfo) = 0;
 
   /**
    * Occurs when the SDK loses connection with the Agora channel.

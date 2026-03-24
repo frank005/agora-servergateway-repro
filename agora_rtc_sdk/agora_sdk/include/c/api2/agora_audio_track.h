@@ -120,6 +120,16 @@ AGORA_API_C_INT agora_audio_track_get_playout_volume(AGORA_HANDLE agora_audio_tr
 /**
  * @ANNOTATION:GROUP:agora_audio_track
  */
+AGORA_API_C_INT agora_audio_track_enable_audio_filter(AGORA_HANDLE agora_audio_track, const char *name, int enable, int position);
+
+/**
+ * @ANNOTATION:GROUP:agora_audio_track
+ */
+AGORA_API_C_INT agora_audio_track_set_filter_property(AGORA_HANDLE agora_audio_track, const char *name, const char *key, const char *value, int position);
+
+/**
+ * @ANNOTATION:GROUP:agora_audio_track
+ */
 AGORA_API_C_INT agora_audio_track_add_audio_sink(AGORA_HANDLE agora_audio_track, AGORA_HANDLE agora_audio_sink, const audio_sink_wants* wants);
 
 /**
@@ -182,6 +192,11 @@ AGORA_API_C_VOID agora_local_audio_track_set_max_bufferd_frame_number(AGORA_HAND
  * @ANNOTATION:GROUP:agora_local_audio_track
  */
 AGORA_API_C_VOID agora_local_audio_track_set_send_delay_ms(AGORA_HANDLE agora_local_audio_track,int delay_ms);
+
+/**
+ * @ANNOTATION:GROUP:agora_local_audio_track
+ */
+AGORA_API_C_INT agora_local_audio_track_set_total_extra_send_ms(AGORA_HANDLE agora_local_audio_track, uint64_t total_extra_send_ms);
 
 /**
  * @ANNOTATION:GROUP:agora_local_audio_track

@@ -72,7 +72,11 @@ enum LOG_FILTER_TYPE {
   LOG_FILTER_MASK = 0x80f,
 };
 
+#if defined(__linux__) && !defined(__ANDROID__)
+const uint32_t MAX_LOG_SIZE = 1024 * 1024 * 1024;  // 1G
+#else
 const uint32_t MAX_LOG_SIZE = 20 * 1024 * 1024;  // 20MB
+#endif
 const uint32_t MIN_LOG_SIZE = 128 * 1024;        // 128KB
 /** The default log size in kb
  */
