@@ -548,6 +548,11 @@ int main(int argc, char* argv[]) {
       return 1;
     }
   }
+  {
+    int sdkBuild = 0;
+    const char* sdkVer = getAgoraSdkVersion(&sdkBuild);
+    fprintf(stderr, "Agora SDK version: %s (build %d)\n", sdkVer ? sdkVer : "?", sdkBuild);
+  }
 
   /* Log scheduler limits and current thread priority (context for glibc tpp.c assertion) */
   {

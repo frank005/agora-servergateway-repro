@@ -714,6 +714,17 @@ int main(int argc, char* argv[]) {
   fprintf(stderr, "0. Loading Agora SDK via dlopen (v2 C API, dlsym only — no -lagora_rtc_sdk link)...\n");
   void* lib = dlopen("libagora_rtc_sdk.so", RTLD_NOW | RTLD_GLOBAL);
   if (!lib) { fprintf(stderr, "dlopen libagora_rtc_sdk.so failed: %s\n", dlerror()); return 1; }
+  {
+    typedef const char* (*pfn_get_sdk_version)(int*);
+    pfn_get_sdk_version get_ver = (pfn_get_sdk_version)dlsym(lib, "getAgoraSdkVersion");
+    if (get_ver) {
+      int b = 0;
+      const char* v = get_ver(&b);
+      fprintf(stderr, "[v2] Agora SDK version: %s (build %d)\n", v ? v : "?", b);
+    } else {
+      fprintf(stderr, "[v2] getAgoraSdkVersion: dlsym failed (optional)\n");
+    }
+  }
   if (load_symbols(lib) != 0) { dlclose(lib); return 1; }
   fprintf(stderr, "dlopen + all dlsym OK (%zu symbols loaded).\n", (size_t)44);
 
