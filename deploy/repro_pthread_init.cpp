@@ -14,6 +14,15 @@
  *   AGORA_LU_CB_AUDIO_SUB=0|1 - local user callback onUserAudioTrackSubscribed (default 1)
  *   AGORA_LU_CB_VIDEO_SUB=0|1 - local user callback onUserVideoTrackSubscribed (default 1)
  *   AGORA_LU_CB_VOLUME_IND=0|1 - local user callback onAudioVolumeIndication (default 1)
+ *   AGORA_LU_CB_USER_INFO_UPDATED=0|1 - onUserInfoUpdated (default 0)
+ *   AGORA_AREA_CODE=GLOB|OVS|0xFFFFFFFF — service area (default GLOB)
+ *   AGORA_SET_SERVICE_CHANNEL_PROFILE=0|1 — set channelProfile on AgoraServiceConfiguration (default 0)
+ *   AGORA_SERVICE_CHANNEL_PROFILE — COMMUNICATION|LIVE_BROADCASTING when service profile is set
+ *   AGORA_SET_SERVICE_AUDIO_SCENARIO=0|1 — set audioScenario on AgoraServiceConfiguration (default 0)
+ *   AGORA_SERVICE_AUDIO_SCENARIO — DEFAULT|CHATROOM|… or 0–10
+ *   AGORA_VOLUME_INDICATION_INTERVAL_MS, AGORA_VOLUME_INDICATION_SMOOTH, AGORA_VOLUME_INDICATION_VAD (0|1)
+ *   AGORA_SET_LOCAL_USER_AUDIO_SCENARIO=0|1 — call ILocalUser::setAudioScenario (default 0)
+ *   AGORA_LOCAL_USER_AUDIO_SCENARIO — same names/numbers as service audio scenario
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
  *   AGORA_SEND_AUDIO=1    - publish local audio (generated PCM, e.g. 440 Hz tone)
  *   AGORA_SEND_VIDEO=1    - publish local video (generated image, 720p)
@@ -178,6 +187,69 @@ static agora::rtc::CLIENT_ROLE_TYPE parse_client_role_type(const char* role) {
   return agora::rtc::CLIENT_ROLE_AUDIENCE;
 }
 
+static unsigned int parse_area_code(const char* s) {
+  if (!s || !s[0]) return (unsigned int)agora::rtc::AREA_CODE_GLOB;
+  std::string m(s);
+  size_t len = m.size();
+  while (len > 0 && (m[len - 1] == ' ' || m[len - 1] == '\t')) --len;
+  size_t hash = m.find('#');
+  if (hash != std::string::npos) {
+    if (hash < len) len = hash;
+    while (len > 0 && (m[len - 1] == ' ' || m[len - 1] == '\t')) --len;
+  }
+  m.resize(len);
+  for (auto& c : m) if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+  if (m == "GLOB" || m == "GLOBAL" || m == "AREA_CODE_GLOB") return (unsigned int)agora::rtc::AREA_CODE_GLOB;
+  if (m == "OVS" || m == "AREA_CODE_OVS") return agora::rtc::AREA_CODE_OVS;
+  char* end = nullptr;
+  unsigned long v = strtoul(m.c_str(), &end, 0);
+  if (end != m.c_str() && v <= 0xFFFFFFFFu) return (unsigned int)v;
+  return (unsigned int)agora::rtc::AREA_CODE_GLOB;
+}
+
+static agora::rtc::AUDIO_SCENARIO_TYPE parse_audio_scenario(const char* s) {
+  if (!s || !s[0]) return agora::rtc::AUDIO_SCENARIO_DEFAULT;
+  char* end = nullptr;
+  long n = strtol(s, &end, 10);
+  if (end != s && n >= 0 && n <= 10) {
+    while (*end == ' ' || *end == '\t') ++end;
+    if (*end == '\0' || *end == '#')
+      return static_cast<agora::rtc::AUDIO_SCENARIO_TYPE>(n);
+  }
+  std::string m(s);
+  size_t len = m.size();
+  while (len > 0 && (m[len - 1] == ' ' || m[len - 1] == '\t')) --len;
+  size_t hash = m.find('#');
+  if (hash != std::string::npos) {
+    if (hash < len) len = hash;
+    while (len > 0 && (m[len - 1] == ' ' || m[len - 1] == '\t')) --len;
+  }
+  m.resize(len);
+  for (auto& c : m) if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+  if (m == "DEFAULT" || m == "0") return agora::rtc::AUDIO_SCENARIO_DEFAULT;
+  if (m == "GAME_STREAMING" || m == "GAME") return agora::rtc::AUDIO_SCENARIO_GAME_STREAMING;
+  if (m == "CHATROOM" || m == "CHAT") return agora::rtc::AUDIO_SCENARIO_CHATROOM;
+  if (m == "CHORUS") return agora::rtc::AUDIO_SCENARIO_CHORUS;
+  if (m == "MEETING") return agora::rtc::AUDIO_SCENARIO_MEETING;
+  if (m == "AI_SERVER") return agora::rtc::AUDIO_SCENARIO_AI_SERVER;
+  if (m == "AI_CLIENT") return agora::rtc::AUDIO_SCENARIO_AI_CLIENT;
+  return agora::rtc::AUDIO_SCENARIO_DEFAULT;
+}
+
+static int getenv_int_or(const char* name, int def) {
+  const char* v = getenv(name);
+  if (!v || !v[0]) return def;
+  char* end = nullptr;
+  long n = strtol(v, &end, 10);
+  if (end == v) return def;
+  return (int)n;
+}
+
+static bool getenv_bool_default(const char* name, bool def) {
+  const char* v = getenv(name);
+  if (!v || !v[0]) return def;
+  return getenv_bool(name);
+}
 
 /* Plain-text Agora SDK log writer so logs are readable (setLogFile writes binary). */
 struct FileLogWriter : public agora::commons::ILogWriter {
@@ -268,13 +340,15 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
                            bool audioObserverAlreadyRegistered,
                            bool enableAudioSubscribedCallback,
                            bool enableVideoSubscribedCallback,
-                           bool enableVolumeIndicationCallback)
+                           bool enableVolumeIndicationCallback,
+                           bool enableUserInfoUpdatedCallback)
       : local_user_(user), audio_observer_(audioObs), video_observer_(videoObs),
         enable_audio_observer_(enableAudioObserver),
         audio_observer_registered_(audioObserverAlreadyRegistered),
         enable_audio_subscribed_cb_(enableAudioSubscribedCallback),
         enable_video_subscribed_cb_(enableVideoSubscribedCallback),
         enable_volume_indication_cb_(enableVolumeIndicationCallback),
+        enable_user_info_cb_(enableUserInfoUpdatedCallback),
         cleaned_up_(false) {
     local_user_->registerLocalUserObserver(this);
   }
@@ -342,6 +416,14 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
               (unsigned long long)n, speakerNumber, totalVolume, topUid, topVol);
     }
   }
+  void onUserInfoUpdated(agora::user_id_t userId, USER_MEDIA_INFO msg, bool val) override {
+    if (!enable_user_info_cb_) return;
+    static std::atomic<uint64_t> cbCount{0};
+    uint64_t n = ++cbCount;
+    if (n % 20 == 0)
+      fprintf(stderr, "[user-info] callbacks=%llu user_id=%s msg=%d val=%d\n",
+              (unsigned long long)n, userId ? userId : "-", (int)msg, val ? 1 : 0);
+  }
   void onActiveSpeaker(agora::user_id_t) override {}
   void onAudioSubscribeStateChanged(const char*, agora::user_id_t, agora::rtc::STREAM_SUBSCRIBE_STATE, agora::rtc::STREAM_SUBSCRIBE_STATE, int) override {}
   void onVideoSubscribeStateChanged(const char*, agora::user_id_t, agora::rtc::STREAM_SUBSCRIBE_STATE, agora::rtc::STREAM_SUBSCRIBE_STATE, int) override {}
@@ -362,6 +444,7 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
   bool enable_audio_subscribed_cb_;
   bool enable_video_subscribed_cb_;
   bool enable_volume_indication_cb_;
+  bool enable_user_info_cb_;
   bool cleaned_up_;
 };
 
@@ -524,6 +607,36 @@ int main(int argc, char* argv[]) {
     const char* v = getenv("AGORA_LU_CB_VOLUME_IND");
     if (v && v[0]) luCbVolumeInd = getenv_bool("AGORA_LU_CB_VOLUME_IND");
   }
+  bool luCbUserInfo = false;
+  {
+    const char* v = getenv("AGORA_LU_CB_USER_INFO_UPDATED");
+    if (v && v[0]) luCbUserInfo = getenv_bool("AGORA_LU_CB_USER_INFO_UPDATED");
+  }
+  unsigned int areaCode = parse_area_code(getenv_trimmed_or("AGORA_AREA_CODE", "GLOB").c_str());
+  bool setServiceChannelProfile = false;
+  {
+    const char* v = getenv("AGORA_SET_SERVICE_CHANNEL_PROFILE");
+    if (v && v[0]) setServiceChannelProfile = getenv_bool("AGORA_SET_SERVICE_CHANNEL_PROFILE");
+  }
+  auto serviceChannelProfile =
+      parse_channel_profile(getenv_trimmed_or("AGORA_SERVICE_CHANNEL_PROFILE", "COMMUNICATION").c_str());
+  bool setServiceAudioScenario = false;
+  {
+    const char* v = getenv("AGORA_SET_SERVICE_AUDIO_SCENARIO");
+    if (v && v[0]) setServiceAudioScenario = getenv_bool("AGORA_SET_SERVICE_AUDIO_SCENARIO");
+  }
+  agora::rtc::AUDIO_SCENARIO_TYPE serviceAudioScenario =
+      parse_audio_scenario(getenv_trimmed_or("AGORA_SERVICE_AUDIO_SCENARIO", "DEFAULT").c_str());
+  int volIndIntervalMs = getenv_int_or("AGORA_VOLUME_INDICATION_INTERVAL_MS", 1000);
+  int volIndSmooth = getenv_int_or("AGORA_VOLUME_INDICATION_SMOOTH", 3);
+  bool volIndVad = getenv_bool_default("AGORA_VOLUME_INDICATION_VAD", false);
+  bool setLocalUserAudioScenario = false;
+  {
+    const char* v = getenv("AGORA_SET_LOCAL_USER_AUDIO_SCENARIO");
+    if (v && v[0]) setLocalUserAudioScenario = getenv_bool("AGORA_SET_LOCAL_USER_AUDIO_SCENARIO");
+  }
+  agora::rtc::AUDIO_SCENARIO_TYPE localUserAudioScenario =
+      parse_audio_scenario(getenv_trimmed_or("AGORA_LOCAL_USER_AUDIO_SCENARIO", "DEFAULT").c_str());
   bool receiveVideo = getenv_bool("AGORA_RECEIVE_VIDEO");
   bool sendAudio = getenv_bool("AGORA_SEND_AUDIO");
   bool sendVideo = getenv_bool("AGORA_SEND_VIDEO");
@@ -589,6 +702,21 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "AGORA_USE_STRING_UID=1: string user account mode; AGORA_UID=\"%s\"\n", uid.c_str());
   else
     fprintf(stderr, "Numeric UID mode (default); AGORA_UID=\"%s\" (set AGORA_USE_STRING_UID=1 for string account)\n", uid.c_str());
+  config.areaCode = areaCode;
+  fprintf(stderr, "AGORA_AREA_CODE -> 0x%x\n", areaCode);
+  if (setServiceChannelProfile) {
+    config.channelProfile = serviceChannelProfile;
+    fprintf(stderr, "Service channelProfile=%d (%s)\n", (int)serviceChannelProfile,
+            (serviceChannelProfile == agora::CHANNEL_PROFILE_LIVE_BROADCASTING) ? "LIVE_BROADCASTING" : "COMMUNICATION");
+  } else {
+    fprintf(stderr, "AGORA_SET_SERVICE_CHANNEL_PROFILE=0: not overriding service channelProfile (SDK constructor default).\n");
+  }
+  if (setServiceAudioScenario) {
+    config.audioScenario = serviceAudioScenario;
+    fprintf(stderr, "Service audioScenario=%d\n", (int)serviceAudioScenario);
+  } else {
+    fprintf(stderr, "AGORA_SET_SERVICE_AUDIO_SCENARIO=0: not overriding service audioScenario (SDK constructor default).\n");
+  }
   /* Optional: set deprecated threadPriority (0=LOWEST..5=CRITICAL). If SDK honors it, LOWEST/NORMAL might avoid RT. */
   const char* tp = getenv("AGORA_THREAD_PRIORITY");
   if (tp && tp[0]) {
@@ -703,9 +831,19 @@ int main(int argc, char* argv[]) {
       service->release();
       return 1;
     }
+    if (setLocalUserAudioScenario) {
+      int asr = localUser->setAudioScenario(localUserAudioScenario);
+      if (asr == 0) fprintf(stderr, "ILocalUser::setAudioScenario(%d) OK.\n", (int)localUserAudioScenario);
+      else fprintf(stderr, "setAudioScenario() failed %d\n", asr);
+    } else {
+      fprintf(stderr, "AGORA_SET_LOCAL_USER_AUDIO_SCENARIO=0: not calling setAudioScenario on local user.\n");
+    }
+
     if (enableAudioVolumeIndication) {
-      int vir = localUser->setAudioVolumeIndicationParameters(1000, 3, false);
-      if (vir == 0) fprintf(stderr, "Audio volume indication enabled (interval=1000ms smooth=3 vad=0).\n");
+      int vir = localUser->setAudioVolumeIndicationParameters(volIndIntervalMs, volIndSmooth, volIndVad);
+      if (vir == 0)
+        fprintf(stderr, "Audio volume indication enabled (interval=%dms smooth=%d vad=%d).\n",
+                volIndIntervalMs, volIndSmooth, volIndVad ? 1 : 0);
       else fprintf(stderr, "setAudioVolumeIndicationParameters() failed %d\n", vir);
     } else {
       fprintf(stderr, "AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0: audio volume indication disabled.\n");
@@ -789,11 +927,11 @@ int main(int argc, char* argv[]) {
     }
     std::unique_ptr<MinimalLocalUserObserver> userObserver;
     if (registerLocalUserObserver) {
-      fprintf(stderr, "Local user observer callbacks: audio_sub=%d video_sub=%d volume_ind=%d\n",
-              luCbAudioSub ? 1 : 0, luCbVideoSub ? 1 : 0, luCbVolumeInd ? 1 : 0);
+      fprintf(stderr, "Local user observer callbacks: audio_sub=%d video_sub=%d volume_ind=%d user_info=%d\n",
+              luCbAudioSub ? 1 : 0, luCbVideoSub ? 1 : 0, luCbVolumeInd ? 1 : 0, luCbUserInfo ? 1 : 0);
       userObserver.reset(new MinimalLocalUserObserver(
           localUser, &playbackAudioObs, receiveVideo ? &playbackVideoObs : nullptr,
-          registerAudioObserver, audioObserverPreRegistered, luCbAudioSub, luCbVideoSub, luCbVolumeInd));
+          registerAudioObserver, audioObserverPreRegistered, luCbAudioSub, luCbVideoSub, luCbVolumeInd, luCbUserInfo));
       fprintf(stderr, "Local user observer registered.\n");
     } else {
       fprintf(stderr, "AGORA_REGISTER_LOCAL_USER_OBSERVER=0: local user observer registration disabled.\n");

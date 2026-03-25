@@ -10,6 +10,10 @@
 #   3. Default: <repo-root>/logs/agora_sdk.log
 #
 # In-container log path is always /app/agora_sdk.log (the SDK default).
+#
+# Container hardening (matches root docker-compose `repro`: no extra caps, no RT priority):
+#   --cap-drop=ALL --ulimit rtprio=0
+# On Apple Silicon, --platform linux/amd64 matches the amd64 SDK in this image.
 set -euo pipefail
 
 # Resolve repo root (two levels up from this script, no matter where it's called from)
@@ -56,7 +60,8 @@ if [[ "${HOST_LOG_PATH}" != /* ]]; then
   HOST_LOG_PATH="${REPO_ROOT}/${HOST_LOG_PATH}"
 fi
 
-IMAGE_NAME="${AGORA_REPRO_IMAGE:-agora-repro}"
+# Default matches root docker-compose.yml image (docker compose build repro).
+IMAGE_NAME="${AGORA_REPRO_IMAGE:-servergateway-repro}"
 CONTAINER_NAME="agora-repro-logs-$$"
 
 echo "============================================================"
@@ -66,13 +71,26 @@ echo "  log (in):      ${IN_CONTAINER_LOG}"
 echo "  log (host):    ${HOST_LOG_PATH}"
 echo "============================================================"
 
+DOCKER_PLATFORM=()
+if [[ "$(uname -m)" == "arm64" ]] || [[ "$(uname -m)" == "aarch64" ]]; then
+  DOCKER_PLATFORM=(--platform linux/amd64)
+fi
+
+ENV_FILE_ARGS=()
+if [[ -f "${ENV_FILE}" ]]; then
+  ENV_FILE_ARGS=(--env-file "${ENV_FILE}")
+else
+  echo "Note: ${ENV_FILE} not found; running without --env-file (pass env via -e or shell)." >&2
+fi
+
 # Run (no --rm so we can docker cp after exit)
 set +e
 docker run \
   --name "${CONTAINER_NAME}" \
   --cap-drop=ALL \
   --ulimit rtprio=0 \
-  --env-file "${ENV_FILE}" \
+  "${DOCKER_PLATFORM[@]}" \
+  "${ENV_FILE_ARGS[@]}" \
   -e "AGORA_LOG_FILE=${IN_CONTAINER_LOG}" \
   "$@" \
   "${IMAGE_NAME}"
