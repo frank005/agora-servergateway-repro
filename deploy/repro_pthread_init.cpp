@@ -290,6 +290,17 @@ static int getenv_join_duration_sec(int defaultVal) {
   return (int)n;
 }
 
+/** Log user_id string plus uid_int when the string is all digits (numeric UID); else n/a for string accounts. */
+static void log_user_id_with_optional_uint(FILE* f, const char* tag, agora::user_id_t userId) {
+  const char* u = userId ? userId : "?";
+  char* end = nullptr;
+  unsigned long n = strtoul(u, &end, 10);
+  if (userId && userId[0] && end != u && *end == '\0')
+    fprintf(f, "%s user_id=%s uid_int=%lu\n", tag, u, n);
+  else
+    fprintf(f, "%s user_id=%s uid_int=n/a (string account)\n", tag, u);
+}
+
 /* ---- Audio: receive playback (mixed remote) ---- */
 class PlaybackAudioObserver : public agora::media::IAudioFrameObserverBase {
  public:
@@ -322,11 +333,12 @@ class PlaybackVideoObserver : public agora::rtc::IVideoFrameObserver2 {
   void onFrame(const char* channelId, agora::user_id_t remoteUid,
                const agora::media::base::VideoFrame* frame) override {
     (void)channelId;
-    (void)remoteUid;
     uint64_t n = ++framesReceived_;
-    if (frame && n % 30 == 0)
-      fprintf(stderr, "[video] received remote frame %llu (SDK callback, raw): %dx%d\n",
+    if (frame && n % 30 == 0) {
+      fprintf(stderr, "[video] received remote frame %llu (SDK callback, raw): %dx%d ",
               (unsigned long long)n, frame->width, frame->height);
+      log_user_id_with_optional_uint(stderr, "", remoteUid);
+    }
   }
 };
 
@@ -374,7 +386,8 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
       local_user_->registerAudioFrameObserver(audio_observer_);
       audio_observer_registered_ = true;
     }
-    fprintf(stderr, "Subscribed to remote audio (user %s).\n", userId);
+    fprintf(stderr, "Subscribed to remote audio: ");
+    log_user_id_with_optional_uint(stderr, "", userId);
   }
 
   void onUserVideoTrackSubscribed(agora::user_id_t userId, const agora::rtc::VideoTrackInfo& trackInfo,
@@ -384,7 +397,8 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
     if (!enable_video_subscribed_cb_) return;
     if (local_user_ && video_observer_)
       local_user_->registerVideoFrameObserver(video_observer_);
-    fprintf(stderr, "Subscribed to remote video (user %s).\n", userId);
+    fprintf(stderr, "Subscribed to remote video: ");
+    log_user_id_with_optional_uint(stderr, "", userId);
   }
 
   void onAudioTrackPublishStart(agora::agora_refptr<agora::rtc::ILocalAudioTrack>) override {}
@@ -412,17 +426,35 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
     if (n % 10 == 0) {
       const char* topUid = (speakerNumber > 0 && speakers && speakers[0].userId) ? speakers[0].userId : "-";
       unsigned int topVol = (speakerNumber > 0 && speakers) ? speakers[0].volume : 0;
-      fprintf(stderr, "[audio-volume] callbacks=%llu speakers=%u total=%d top_uid=%s top_vol=%u\n",
+      fprintf(stderr, "[audio-volume] callbacks=%llu speakers=%u total=%d top_user_id=%s top_vol=%u",
               (unsigned long long)n, speakerNumber, totalVolume, topUid, topVol);
+      if (topUid[0] && std::strcmp(topUid, "-") != 0) {
+        char* end = nullptr;
+        unsigned long un = strtoul(topUid, &end, 10);
+        if (end != topUid && *end == '\0')
+          fprintf(stderr, " top_uid_int=%lu\n", un);
+        else
+          fprintf(stderr, " top_uid_int=n/a\n");
+      } else {
+        fprintf(stderr, "\n");
+      }
     }
   }
   void onUserInfoUpdated(agora::user_id_t userId, USER_MEDIA_INFO msg, bool val) override {
     if (!enable_user_info_cb_) return;
     static std::atomic<uint64_t> cbCount{0};
     uint64_t n = ++cbCount;
-    if (n % 20 == 0)
-      fprintf(stderr, "[user-info] callbacks=%llu user_id=%s msg=%d val=%d\n",
-              (unsigned long long)n, userId ? userId : "-", (int)msg, val ? 1 : 0);
+    if (n % 20 == 0) {
+      const char* u = userId ? userId : "-";
+      char* end = nullptr;
+      unsigned long un = strtoul(u, &end, 10);
+      if (end != u && *end == '\0')
+        fprintf(stderr, "[user-info] callbacks=%llu user_id=%s uid_int=%lu msg=%d val=%d\n",
+                (unsigned long long)n, u, un, (int)msg, val ? 1 : 0);
+      else
+        fprintf(stderr, "[user-info] callbacks=%llu user_id=%s uid_int=n/a msg=%d val=%d\n",
+                (unsigned long long)n, u, (int)msg, val ? 1 : 0);
+    }
   }
   void onActiveSpeaker(agora::user_id_t) override {}
   void onAudioSubscribeStateChanged(const char*, agora::user_id_t, agora::rtc::STREAM_SUBSCRIBE_STATE, agora::rtc::STREAM_SUBSCRIBE_STATE, int) override {}
@@ -989,7 +1021,15 @@ int main(int argc, char* argv[]) {
       service->release();
       return 1;
     }
-    fprintf(stderr, "Connected to channel '%s' uid=%s\n", channelId.c_str(), uid.c_str());
+    {
+      agora::rtc::TConnectionInfo ci = connection->getConnectionInfo();
+      const char* lid = "?";
+      if (ci.localUserId.get() != nullptr)
+        lid = ci.localUserId.get()->c_str();
+      fprintf(stderr,
+              "Connected to channel '%s' join_user_id='%s' local_user_id='%s' internal_uid=%u\n",
+              channelId.c_str(), uid.c_str(), lid, (unsigned)ci.internalUid);
+    }
     if (stopAfter == "connect") {
       fprintf(stderr, "Stopping after connect (AGORA_REPRO_STOP_AFTER=connect). Trigger was connect().\n");
       if (userObserver) userObserver->teardown();

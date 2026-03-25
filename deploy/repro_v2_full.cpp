@@ -603,8 +603,18 @@ static void cb_on_audio_volume_indication(void* local_user, const audio_volume_i
   if (n % 10 == 0) {
     const char* top_uid = (speaker_number > 0 && speakers && speakers[0].user_id) ? speakers[0].user_id : "-";
     unsigned int top_vol = (speaker_number > 0 && speakers) ? speakers[0].volume : 0;
-    fprintf(stderr, "[audio-volume] callbacks=%llu speakers=%u total=%d top_uid=%s top_vol=%u\n",
+    fprintf(stderr, "[audio-volume] callbacks=%llu speakers=%u total=%d top_user_id=%s top_vol=%u",
             (unsigned long long)n, speaker_number, total_volume, top_uid, top_vol);
+    if (top_uid[0] && strcmp(top_uid, "-") != 0) {
+      char* end = nullptr;
+      unsigned long un = strtoul(top_uid, &end, 10);
+      if (end != top_uid && *end == '\0')
+        fprintf(stderr, " top_uid_int=%lu\n", un);
+      else
+        fprintf(stderr, " top_uid_int=n/a\n");
+    } else {
+      fprintf(stderr, "\n");
+    }
   }
 }
 
@@ -612,9 +622,17 @@ static std::atomic<uint64_t> g_user_info_cb_count{0};
 static void cb_on_user_info_updated(void* local_user, user_id_t user_id, int msg, int val) {
   (void)local_user;
   uint64_t n = ++g_user_info_cb_count;
-  if (n % 20 == 0)
-    fprintf(stderr, "[user-info] callbacks=%llu user_id=%s msg=%d val=%d\n",
-            (unsigned long long)n, user_id ? user_id : "-", msg, val);
+  if (n % 20 == 0) {
+    const char* u = user_id ? user_id : "-";
+    char* end = nullptr;
+    unsigned long un = strtoul(u, &end, 10);
+    if (end != u && *end == '\0')
+      fprintf(stderr, "[user-info] callbacks=%llu user_id=%s uid_int=%lu msg=%d val=%d\n",
+              (unsigned long long)n, u, un, msg, val);
+    else
+      fprintf(stderr, "[user-info] callbacks=%llu user_id=%s uid_int=n/a msg=%d val=%d\n",
+              (unsigned long long)n, u, msg, val);
+  }
 }
 
 /* ============================================================
@@ -623,16 +641,35 @@ static void cb_on_user_info_updated(void* local_user, user_id_t user_id, int msg
 
 static rtc_conn_observer g_conn_obs = {};
 
+static void log_remote_user_id_uid_int(FILE* out, const char* prefix, const char* user_id) {
+  const char* u = (user_id && user_id[0]) ? user_id : "?";
+  char* end = nullptr;
+  unsigned long n = strtoul(u, &end, 10);
+  if (end != u && *end == '\0')
+    fprintf(out, "%s user_id=%s uid_int=%lu\n", prefix, u, n);
+  else
+    fprintf(out, "%s user_id=%s uid_int=n/a (string account)\n", prefix, u);
+}
+
 static void cb_on_connected(void* conn, const rtc_conn_info* info, int reason) {
   (void)conn;
-  fprintf(stderr, "[conn] Connected: channel='%s' uid='%s' reason=%d\n",
-          (info && info->channel_id)    ? info->channel_id    : "?",
-          (info && info->local_user_id) ? info->local_user_id : "?",
-          reason);
+  const char* ch = (info && info->channel_id) ? info->channel_id : "?";
+  const char* lid = (info && info->local_user_id) ? info->local_user_id : "?";
+  unsigned int iuid = info ? info->internal_uid : 0;
+  fprintf(stderr, "[conn] Connected: channel='%s' local_user_id='%s' internal_uid=%u reason=%d\n",
+          ch, lid, iuid, reason);
 }
 static void cb_on_disconnected(void* conn, const rtc_conn_info* info, int reason) {
-  (void)conn; (void)info;
-  fprintf(stderr, "[conn] Disconnected (reason=%d).\n", reason);
+  (void)conn;
+  if (info) {
+    const char* ch = info->channel_id ? info->channel_id : "?";
+    const char* lid = info->local_user_id ? info->local_user_id : "?";
+    const unsigned int iuid = info->internal_uid;
+    fprintf(stderr, "[conn] Disconnected: channel='%s' local_user_id='%s' internal_uid=%u reason=%d\n",
+            ch, lid, iuid, reason);
+  } else {
+    fprintf(stderr, "[conn] Disconnected (reason=%d).\n", reason);
+  }
 }
 static void cb_on_connecting(void* conn, const rtc_conn_info* info, int reason)    { (void)conn; (void)info; (void)reason; }
 static void cb_on_reconnecting(void* conn, const rtc_conn_info* info, int reason)  { (void)conn; (void)info; fprintf(stderr, "[conn] Reconnecting (reason=%d).\n", reason); }
@@ -640,8 +677,20 @@ static void cb_on_reconnected(void* conn, const rtc_conn_info* info, int reason)
 static void cb_on_conn_lost(void* conn, const rtc_conn_info* info)                 { (void)conn; (void)info; fprintf(stderr, "[conn] Connection lost.\n"); }
 static void cb_on_conn_error(void* conn, int error, const char* msg)               { (void)conn; fprintf(stderr, "[conn] Error %d: %s\n", error, msg ? msg : ""); }
 static void cb_on_conn_warning(void* conn, int warning, const char* msg)           { (void)conn; fprintf(stderr, "[conn] Warning %d: %s\n", warning, msg ? msg : ""); }
-static void cb_on_user_joined(void* conn, const char* user_id)                     { (void)conn; fprintf(stderr, "[conn] Remote user joined: %s\n", user_id ? user_id : "?"); }
-static void cb_on_user_left(void* conn, const char* user_id, int reason)           { (void)conn; fprintf(stderr, "[conn] Remote user left: %s (reason=%d)\n", user_id ? user_id : "?", reason); }
+static void cb_on_user_joined(void* conn, const char* user_id) {
+  (void)conn;
+  log_remote_user_id_uid_int(stderr, "[conn] Remote user joined:", user_id);
+}
+static void cb_on_user_left(void* conn, const char* user_id, int reason) {
+  (void)conn;
+  const char* u = user_id ? user_id : "?";
+  char* end = nullptr;
+  unsigned long n = strtoul(u, &end, 10);
+  if (end != u && *end == '\0')
+    fprintf(stderr, "[conn] Remote user left: user_id=%s uid_int=%lu reason=%d\n", u, n, reason);
+  else
+    fprintf(stderr, "[conn] Remote user left: user_id=%s uid_int=n/a account/string reason=%d\n", u, reason);
+}
 static void cb_on_token_expire(void* conn, const char* token)                      { (void)conn; (void)token; fprintf(stderr, "[conn] Token privilege will expire.\n"); }
 
 /* ============================================================
@@ -1318,7 +1367,9 @@ int main(int argc, char* argv[]) {
                     send_video_track, video_sender, video_factory);
       if (g_svc_at_exit) g_svc_at_exit(svc); g_svc_release(svc); dlclose(lib); return 1;
     }
-    fprintf(stderr, "Connected to channel '%s' uid=%s\n", channelId.c_str(), uid.c_str());
+    fprintf(stderr,
+            "agora_rtc_conn_connect() OK; join_user_id='%s' (see [conn] Connected for local_user_id + internal_uid).\n",
+            uid.c_str());
 
     if (stopAfter == "connect") {
       fprintf(stderr, "Stopping after connect (AGORA_REPRO_STOP_AFTER=connect).\n");
