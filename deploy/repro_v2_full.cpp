@@ -15,10 +15,10 @@
  *   AGORA_SET_CLIENT_ROLE_TYPE=0|1 - whether to set client_role_type on connection config (default 1)
  *   AGORA_CLIENT_ROLE_TYPE=AUDIENCE|BROADCASTER (or 2|1)
  *   AGORA_REGISTER_CONN_OBSERVER=0|1 - register rtc_conn observer callbacks (default 0 for stability)
- *   AGORA_REGISTER_LOCAL_USER_OBSERVER=0|1 - register local_user observer callbacks (default 0 for stability)
+ *   AGORA_REGISTER_LOCAL_USER_OBSERVER=0|1 - register local_user observer callbacks (default 1; match C++ repro)
  *   AGORA_LU_CB_AUDIO_SUB=0|1 - local_user_observer.on_user_audio_track_subscribed (default 1)
  *   AGORA_LU_CB_VIDEO_SUB=0|1 - local_user_observer.on_user_video_track_subscribed (default 1)
- *   AGORA_LU_CB_VOLUME_IND=0|1 - local_user_observer.on_audio_volume_indication (default 0; known crash trigger)
+ *   AGORA_LU_CB_VOLUME_IND=0|1 - on_audio_volume_indication (default follows AGORA_ENABLE_AUDIO_VOLUME_INDICATION; set 0 to disable callback only)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
  *   AGORA_SEND_AUDIO=1    - publish local audio (440 Hz PCM tone, 16 kHz mono)
  *   AGORA_SEND_VIDEO=1    - publish local video (720p I420 badge pattern)
@@ -41,7 +41,8 @@
  *   AGORA_SET_LOCAL_USER_AUDIO_SCENARIO=0|1 — call agora_local_user_set_audio_scenario after get_local_user (default 0)
  *   AGORA_LOCAL_USER_AUDIO_SCENARIO — same names/numbers as service audio scenario
  *   AGORA_LU_CB_USER_INFO_UPDATED=0|1 — wire on_user_info_updated (default 0)
- *   AGORA_DUMP_BEFORE_MIXING_PCM=0|1 — write raw PCM from on_playback_audio_frame_before_mixing to one file per remote UID (default 0)
+ *   AGORA_DUMP_BEFORE_MIXING_PCM=0|1 — per-remote-uid raw PCM from before-mixing callback (default 0)
+ *   AGORA_DUMP_PLAYBACK_PCM=0|1 — mixed playback PCM to playback_mixed.pcm (default 0; easier sanity check than per-uid)
  *   AGORA_DUMP_PCM_DIR — output directory for *.pcm (default /tmp/agora_pcm_dump)
  */
 
@@ -472,11 +473,13 @@ static void*             g_vobs2_handle = nullptr;
 static bool              g_audio_obs_registered = false;
 static bool              g_video_obs_registered = false;
 
-/* Optional: raw PCM from before-mixing callback, one file per remote user_id */
+/* Optional: raw PCM dumps */
 static bool g_dump_before_mixing_pcm = false;
+static bool g_dump_playback_pcm = false;
 static std::string g_dump_pcm_dir;
 static std::mutex g_dump_pcm_mutex;
 static std::map<std::string, FILE*> g_dump_pcm_files;
+static FILE* g_dump_playback_fp = nullptr;
 
 static std::string sanitize_uid_for_filename(const char* uid) {
   std::string s(uid && uid[0] ? uid : "unknown");
@@ -489,7 +492,7 @@ static std::string sanitize_uid_for_filename(const char* uid) {
   return s;
 }
 
-static void close_all_before_mixing_pcm_files() {
+static void close_all_pcm_dump_files() {
   std::lock_guard<std::mutex> lock(g_dump_pcm_mutex);
   for (auto& kv : g_dump_pcm_files) {
     if (kv.second) {
@@ -498,6 +501,10 @@ static void close_all_before_mixing_pcm_files() {
     }
   }
   g_dump_pcm_files.clear();
+  if (g_dump_playback_fp) {
+    fclose(g_dump_playback_fp);
+    g_dump_playback_fp = nullptr;
+  }
 }
 
 /* ============================================================
@@ -507,6 +514,25 @@ static void close_all_before_mixing_pcm_files() {
 static int cb_on_playback_audio_frame(void* local_user, const char* channel_id, const audio_frame* frame) {
   (void)local_user; (void)channel_id;
   uint64_t n = ++g_audio_frames_received;
+  if (g_dump_playback_pcm && frame && frame->buffer && frame->samples_per_channel > 0) {
+    int bps = frame->bytes_per_sample > 0 ? frame->bytes_per_sample : 2;
+    int ch = frame->channels > 0 ? frame->channels : 1;
+    size_t nbytes = (size_t)frame->samples_per_channel * (size_t)ch * (size_t)bps;
+    if (nbytes > 0) {
+      std::lock_guard<std::mutex> lock(g_dump_pcm_mutex);
+      if (!g_dump_playback_fp) {
+        std::string path = g_dump_pcm_dir + "/playback_mixed.pcm";
+        g_dump_playback_fp = fopen(path.c_str(), "ab");
+        if (g_dump_playback_fp)
+          fprintf(stderr, "[pcm-dump] writing mixed playback PCM -> %s (sr=%d ch=%d bps=%zd)\n",
+                  path.c_str(), frame->samples_per_sec, ch, (size_t)bps);
+        else
+          fprintf(stderr, "[pcm-dump] fopen(%s) failed errno=%d\n", path.c_str(), errno);
+      }
+      if (g_dump_playback_fp)
+        fwrite(frame->buffer, 1, nbytes, g_dump_playback_fp);
+    }
+  }
   if (frame && frame->buffer && frame->samples_per_channel > 0 && n % 100 == 0)
     fprintf(stderr, "[audio] received remote frame %llu (SDK callback, raw): %d samples, %d ch, %d Hz\n",
             (unsigned long long)n, frame->samples_per_channel, frame->channels, frame->samples_per_sec);
@@ -600,22 +626,28 @@ static void cb_on_audio_volume_indication(void* local_user, const audio_volume_i
                                           unsigned int speaker_number, int total_volume) {
   (void)local_user;
   uint64_t n = ++g_audio_volume_cb_count;
-  if (n % 10 == 0) {
-    const char* top_uid = (speaker_number > 0 && speakers && speakers[0].user_id) ? speakers[0].user_id : "-";
-    unsigned int top_vol = (speaker_number > 0 && speakers) ? speakers[0].volume : 0;
-    fprintf(stderr, "[audio-volume] callbacks=%llu speakers=%u total=%d top_user_id=%s top_vol=%u",
-            (unsigned long long)n, speaker_number, total_volume, top_uid, top_vol);
-    if (top_uid[0] && strcmp(top_uid, "-") != 0) {
-      char* end = nullptr;
-      unsigned long un = strtoul(top_uid, &end, 10);
-      if (end != top_uid && *end == '\0')
-        fprintf(stderr, " top_uid_int=%lu\n", un);
-      else
-        fprintf(stderr, " top_uid_int=n/a\n");
-    } else {
-      fprintf(stderr, "\n");
-    }
+  /* Log every 5th callback; always print all speaker slots the SDK returned (see speakers=N). */
+  if (n % 5 != 0) return;
+  fprintf(stderr, "[audio-volume] callbacks=%llu speakers=%u total=%d",
+          (unsigned long long)n, speaker_number, total_volume);
+  if (speaker_number > 1)
+    fprintf(stderr, " (multi-speaker)");
+  if (!speakers || speaker_number == 0) {
+    fprintf(stderr, "\n");
+    return;
   }
+  fprintf(stderr, " |");
+  for (unsigned int i = 0; i < speaker_number; ++i) {
+    const char* uid = speakers[i].user_id ? speakers[i].user_id : "?";
+    fprintf(stderr, " [%u] user_id=%s vol=%u", i, uid, speakers[i].volume);
+    char* end = nullptr;
+    unsigned long un = strtoul(uid, &end, 10);
+    if (uid[0] && end != uid && *end == '\0')
+      fprintf(stderr, " uid_int=%lu", un);
+    else
+      fprintf(stderr, " uid_int=n/a");
+  }
+  fprintf(stderr, "\n");
 }
 
 static std::atomic<uint64_t> g_user_info_cb_count{0};
@@ -814,7 +846,7 @@ static void teardown_conn(void* local_user, void* conn,
                           void* send_video_track, void* video_sender, void* video_factory) {
   if (conn) g_conn_disconnect(conn);
   if (local_user) {
-    close_all_before_mixing_pcm_files();
+    close_all_pcm_dump_files();
     if (g_luser_obs_registered) {
       g_luser_unreg_obs(local_user);
       g_luser_obs_registered = false;
@@ -880,7 +912,7 @@ int main(int argc, char* argv[]) {
     const char* rco = getenv("AGORA_REGISTER_CONN_OBSERVER");
     if (rco && rco[0]) registerConnObserver = getenv_bool("AGORA_REGISTER_CONN_OBSERVER");
   }
-  bool registerLocalUserObserver = false;
+  bool registerLocalUserObserver = true;
   {
     const char* rluo = getenv("AGORA_REGISTER_LOCAL_USER_OBSERVER");
     if (rluo && rluo[0]) registerLocalUserObserver = getenv_bool("AGORA_REGISTER_LOCAL_USER_OBSERVER");
@@ -893,6 +925,8 @@ int main(int argc, char* argv[]) {
     const char* v = getenv("AGORA_LU_CB_VIDEO_SUB");
     if (v && v[0]) g_lu_cb_video_sub = getenv_bool("AGORA_LU_CB_VIDEO_SUB");
   }
+  /* Default volume callback on when volume indication is on; set AGORA_LU_CB_VOLUME_IND=0 to disable callback only. */
+  g_lu_cb_volume_ind = enableAudioVolumeIndication;
   {
     const char* v = getenv("AGORA_LU_CB_VOLUME_IND");
     if (v && v[0]) g_lu_cb_volume_ind = getenv_bool("AGORA_LU_CB_VOLUME_IND");
@@ -933,8 +967,13 @@ int main(int argc, char* argv[]) {
     const char* v = getenv("AGORA_DUMP_BEFORE_MIXING_PCM");
     if (v && v[0]) dumpBeforeMixingPcm = getenv_bool("AGORA_DUMP_BEFORE_MIXING_PCM");
   }
+  bool dumpPlaybackPcm = false;
+  {
+    const char* v = getenv("AGORA_DUMP_PLAYBACK_PCM");
+    if (v && v[0]) dumpPlaybackPcm = getenv_bool("AGORA_DUMP_PLAYBACK_PCM");
+  }
   std::string dumpPcmDir = getenv_trimmed_or("AGORA_DUMP_PCM_DIR", "/tmp/agora_pcm_dump");
-  if (dumpBeforeMixingPcm)
+  if (dumpBeforeMixingPcm || dumpPlaybackPcm)
     registerAudioObserver = true;
   bool encryptionEnable = getenv_bool("AGORA_ENCRYPTION_ENABLE");
   std::string encModeStr(getenv_trimmed_or("AGORA_ENCRYPTION_MODE", ""));
@@ -946,13 +985,29 @@ int main(int argc, char* argv[]) {
   if (!stopAfter.empty())
     fprintf(stderr, "Bisect mode: will stop after '%s' (AGORA_REPRO_STOP_AFTER).\n", stopAfter.c_str());
   g_dump_before_mixing_pcm = dumpBeforeMixingPcm;
+  g_dump_playback_pcm = dumpPlaybackPcm;
   g_dump_pcm_dir = dumpPcmDir;
-  if (dumpBeforeMixingPcm) {
+  if (dumpBeforeMixingPcm || dumpPlaybackPcm) {
     if (mkdir(g_dump_pcm_dir.c_str(), 0755) != 0 && errno != EEXIST)
       fprintf(stderr, "AGORA_DUMP_PCM_DIR: mkdir(%s) errno=%d (continuing anyway)\n", g_dump_pcm_dir.c_str(), errno);
-    fprintf(stderr,
-            "AGORA_DUMP_BEFORE_MIXING_PCM=1: raw PCM per remote uid -> %s/before_mixing_<uid>.pcm\n",
-            g_dump_pcm_dir.c_str());
+    if (dumpBeforeMixingPcm)
+      fprintf(stderr,
+              "AGORA_DUMP_BEFORE_MIXING_PCM=1: per-remote raw PCM -> %s/before_mixing_<uid>.pcm\n",
+              g_dump_pcm_dir.c_str());
+    if (dumpPlaybackPcm)
+      fprintf(stderr,
+              "AGORA_DUMP_PLAYBACK_PCM=1: mixed playback -> %s/playback_mixed.pcm\n",
+              g_dump_pcm_dir.c_str());
+  }
+  if (enableAudioVolumeIndication) {
+    if (!registerLocalUserObserver)
+      fprintf(stderr,
+              "Warning: AGORA_ENABLE_AUDIO_VOLUME_INDICATION=1 but AGORA_REGISTER_LOCAL_USER_OBSERVER=0 — "
+              "volume callbacks will not run.\n");
+    else if (!g_lu_cb_volume_ind)
+      fprintf(stderr,
+              "Warning: AGORA_ENABLE_AUDIO_VOLUME_INDICATION=1 but AGORA_LU_CB_VOLUME_IND=0 — "
+              "on_audio_volume_indication will not fire.\n");
   }
 
   if (token.empty()) token = appId;
