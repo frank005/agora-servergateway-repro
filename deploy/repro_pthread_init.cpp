@@ -515,24 +515,29 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
   void onRemoteVideoTrackStatistics(agora::agora_refptr<agora::rtc::IRemoteVideoTrack>, const agora::rtc::RemoteVideoTrackStats&) override {}
   void onAudioVolumeIndication(const agora::rtc::AudioVolumeInformation* speakers, unsigned int speakerNumber, int totalVolume) override {
     if (!enable_volume_indication_cb_) return;
-    static std::atomic<uint64_t> cbCount{0};
-    uint64_t n = ++cbCount;
-    if (n % 5 != 0) return;
+    static std::atomic<uint64_t> seqLocal{0};
+    static std::atomic<uint64_t> seqRemote{0};
     const bool local_cb =
         speakers && speakerNumber == 1 &&
         (!speakers[0].userId || !speakers[0].userId[0] || std::strcmp(speakers[0].userId, "0") == 0);
-    fprintf(stderr, "[audio-volume] kind=%s callbacks=%llu speakers=%u total=%d",
-            local_cb ? "local" : "remote", (unsigned long long)n, speakerNumber, totalVolume);
-    if (speakerNumber > 1)
+    uint64_t seq = local_cb ? ++seqLocal : ++seqRemote;
+    if (local_cb) {
+      if (seq % 20 != 0) return;
+    } else {
+      if (seq % 5 != 0) return;
+    }
+    fprintf(stderr, "[audio-volume][%s] seq=%llu speakers=%u total=%d",
+            local_cb ? "local" : "remote", (unsigned long long)seq, speakerNumber, totalVolume);
+    if (!local_cb && speakerNumber > 1)
       fprintf(stderr, " (multi-speaker)");
     if (!speakers || speakerNumber == 0) {
-      fprintf(stderr, "\n");
+      fprintf(stderr, " | (no entries)\n");
       return;
     }
-    fprintf(stderr, " |");
+    fprintf(stderr, "\n  ");
     for (unsigned int i = 0; i < speakerNumber; ++i) {
       const char* uid = speakers[i].userId ? speakers[i].userId : "?";
-      fprintf(stderr, " [%u] user_id=%s vol=%u", i, uid, speakers[i].volume);
+      fprintf(stderr, "[%u] user_id=%s vol=%u", i, uid, speakers[i].volume);
       if (local_cb && i == 0)
         fprintf(stderr, " vad=%u", speakers[i].vad);
       char* end = nullptr;
@@ -541,6 +546,8 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
         fprintf(stderr, " uid_int=%lu", un);
       else
         fprintf(stderr, " uid_int=n/a");
+      if (i + 1 < speakerNumber)
+        fprintf(stderr, "  ");
     }
     fprintf(stderr, "\n");
   }
@@ -1021,10 +1028,14 @@ int main(int argc, char* argv[]) {
 
     if (enableAudioVolumeIndication) {
       int vir = localUser->setAudioVolumeIndicationParameters(volIndIntervalMs, volIndSmooth, volIndVad);
-      if (vir == 0)
+      if (vir == 0) {
         fprintf(stderr, "Audio volume indication enabled (interval=%dms smooth=%d vad=%d).\n",
                 volIndIntervalMs, volIndSmooth, volIndVad ? 1 : 0);
-      else fprintf(stderr, "setAudioVolumeIndicationParameters() failed %d\n", vir);
+        fprintf(stderr,
+                "Volume logs: [audio-volume][local] = mic/mixing (often 0 if AGORA_SEND_AUDIO=0); "
+                "[audio-volume][remote] = remote speakers. Throttle: local 1/20, remote 1/5.\n");
+      } else
+        fprintf(stderr, "setAudioVolumeIndicationParameters() failed %d\n", vir);
     } else {
       fprintf(stderr, "AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0: audio volume indication disabled.\n");
     }

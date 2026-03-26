@@ -459,7 +459,8 @@ static int load_symbols(void* lib) {
 
 static std::atomic<uint64_t> g_audio_frames_received{0};
 static std::atomic<uint64_t> g_video_frames_received{0};
-static std::atomic<uint64_t> g_audio_volume_cb_count{0};
+static std::atomic<uint64_t> g_vol_ind_seq_local{0};
+static std::atomic<uint64_t> g_vol_ind_seq_remote{0};
 
 static bool              g_enable_audio_observer = true;
 static bool              g_conn_obs_registered = false;
@@ -637,22 +638,27 @@ static bool is_local_volume_indication(const audio_volume_info* speakers, unsign
 static void cb_on_audio_volume_indication(void* local_user, const audio_volume_info* speakers,
                                           unsigned int speaker_number, int total_volume) {
   (void)local_user;
-  uint64_t n = ++g_audio_volume_cb_count;
-  /* Log every 5th callback; always print all speaker slots the SDK returned (see speakers=N). */
-  if (n % 5 != 0) return;
   const bool local_cb = is_local_volume_indication(speakers, speaker_number);
-  fprintf(stderr, "[audio-volume] kind=%s callbacks=%llu speakers=%u total=%d",
-          local_cb ? "local" : "remote", (unsigned long long)n, speaker_number, total_volume);
-  if (speaker_number > 1)
+  /* SDK alternates local vs remote callbacks; throttle each sequence separately so logs are not
+   * biased to only one kind (a single counter + n%%5 often hit only locals). */
+  uint64_t seq = local_cb ? ++g_vol_ind_seq_local : ++g_vol_ind_seq_remote;
+  if (local_cb) {
+    if (seq % 20 != 0) return;
+  } else {
+    if (seq % 5 != 0) return;
+  }
+  fprintf(stderr, "[audio-volume][%s] seq=%llu speakers=%u total=%d",
+          local_cb ? "local" : "remote", (unsigned long long)seq, speaker_number, total_volume);
+  if (!local_cb && speaker_number > 1)
     fprintf(stderr, " (multi-speaker)");
   if (!speakers || speaker_number == 0) {
-    fprintf(stderr, "\n");
+    fprintf(stderr, " | (no entries)\n");
     return;
   }
-  fprintf(stderr, " |");
+  fprintf(stderr, "\n  ");
   for (unsigned int i = 0; i < speaker_number; ++i) {
     const char* uid = speakers[i].user_id ? speakers[i].user_id : "?";
-    fprintf(stderr, " [%u] user_id=%s vol=%u", i, uid, speakers[i].volume);
+    fprintf(stderr, "[%u] user_id=%s vol=%u", i, uid, speakers[i].volume);
     if (local_cb && i == 0)
       fprintf(stderr, " vad=%u", speakers[i].vad);
     char* end = nullptr;
@@ -661,6 +667,8 @@ static void cb_on_audio_volume_indication(void* local_user, const audio_volume_i
       fprintf(stderr, " uid_int=%lu", un);
     else
       fprintf(stderr, " uid_int=n/a");
+    if (i + 1 < speaker_number)
+      fprintf(stderr, "  ");
   }
   fprintf(stderr, "\n");
 }
@@ -1254,10 +1262,14 @@ int main(int argc, char* argv[]) {
 
     if (enableAudioVolumeIndication) {
       int vir = g_luser_set_volume_indication(local_user, volIndIntervalMs, volIndSmooth, volIndVad);
-      if (vir == 0)
+      if (vir == 0) {
         fprintf(stderr, "Audio volume indication enabled (interval=%dms smooth=%d vad=%d).\n",
                 volIndIntervalMs, volIndSmooth, volIndVad ? 1 : 0);
-      else fprintf(stderr, "agora_local_user_set_audio_volume_indication_parameters() failed %d\n", vir);
+        fprintf(stderr,
+                "Volume logs: [audio-volume][local] = mic/mixing (often 0 if AGORA_SEND_AUDIO=0); "
+                "[audio-volume][remote] = remote speakers. Throttle: local 1/20, remote 1/5.\n");
+      } else
+        fprintf(stderr, "agora_local_user_set_audio_volume_indication_parameters() failed %d\n", vir);
     } else {
       fprintf(stderr, "AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0: audio volume indication disabled.\n");
     }
