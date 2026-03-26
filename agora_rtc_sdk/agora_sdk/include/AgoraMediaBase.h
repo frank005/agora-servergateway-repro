@@ -984,6 +984,32 @@ enum ALPHA_STITCH_MODE {
   ALPHA_STITCH_RIGHT = 4,
 };
 
+/**
+ * @brief The custom SEI info.
+ */
+struct VideoCustomSeiInfo {
+  /**
+   * The SEI type.
+   * default type range: [230, 250]
+   * if sei_type is not in this range, this sei will be dropped
+   */
+  int32_t sei_type;
+  /**
+   * The SEI data.
+   */
+  uint8_t* sei_data;
+  /**
+   * The size of the SEI data.
+   * default max size is 1024
+   * if sei_data_size is over max size, this sei will be dropped
+   */
+  uint32_t sei_data_size;
+
+  VideoCustomSeiInfo()
+      : sei_type(-1),
+        sei_data(NULL),
+        sei_data_size(0){}
+};
 
 /**
  * The definition of the ExternalVideoFrame struct.
@@ -1011,7 +1037,10 @@ struct ExternalVideoFrame {
         fillAlphaBuffer(false),
         alphaStitchMode(NO_ALPHA_STITCH),
         d3d11Texture2d(NULL),
-        textureSliceIndex(0){}
+        textureSliceIndex(0),
+        forceKeyFrame(false),
+        videoCustomSeiInfoArray(NULL),
+        videoCustomSeiInfoArraySize(0){}
 
   /**
    * The EGL context type.
@@ -1125,13 +1154,11 @@ struct ExternalVideoFrame {
    */
   float matrix[16];
   /**
-   * [Texture related parameter] The MetaData buffer.
-   *  The default value is NULL
+   * The MetaData buffer. The default value is `NULL`.
    */
   uint8_t* metadataBuffer;
   /**
-   * [Texture related parameter] The MetaData size.
-   *  The default value is 0
+   * The MetaData size. The default value is `0`.
    */
   int metadataSize;
   /**
@@ -1175,6 +1202,32 @@ struct ExternalVideoFrame {
    * The ColorSpace of the video frame.
    */
   ColorSpace colorSpace;
+
+
+  /**
+   * @technical preview
+   * Whether to force this frame to be a key frame. 
+   * If set to true, the frame will be encoded as a key frame.
+   * note: if you are not sure whether this frame should be a key frame, 
+   * please do not set this parameter.
+   */
+  bool forceKeyFrame;
+
+  /**
+   * @technical preview
+   * The custom SEI info array.
+   * when you need to send custom SEI to the remote side, you can set this parameter.
+   * but if you just need to send metadata, please use the metadata parameter.
+   * The default value is `NULL`.
+   */
+  VideoCustomSeiInfo* videoCustomSeiInfoArray;
+
+  /**
+   * @technical preview
+   * The size of the custom SEI info array.
+   * The default value is `0`.
+   */
+  uint32_t videoCustomSeiInfoArraySize;
 };
 
 /**
