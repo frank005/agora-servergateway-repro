@@ -6,6 +6,8 @@
  *   AGORA_USE_STRING_UID=1  - use string user account for join; set AGORA_UID to your account string (not only digits)
  *   AGORA_REGISTER_AUDIO_OBSERVER=0|1 - register playback audio frame observer (default 1)
  *   AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0|1 - enable SDK audio volume indication callback (default 1)
+ *   AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT=0|1 - RtcConnection enableAudioRecordingOrPlayout (default 1 if volume indication on).
+ *     If false, remote [audio-volume][remote] may stay empty while playback PCM callbacks still run.
  *   AGORA_SET_CHANNEL_PROFILE=0|1  - whether to set channelProfile on connection config (default 0)
  *   AGORA_CHANNEL_PROFILE=COMMUNICATION|LIVE_BROADCASTING (or 0|1)
  *   AGORA_SET_CLIENT_ROLE_TYPE=0|1 - whether to set clientRoleType on connection config (default 1)
@@ -718,6 +720,11 @@ int main(int argc, char* argv[]) {
     const char* eavi = getenv("AGORA_ENABLE_AUDIO_VOLUME_INDICATION");
     if (eavi && eavi[0]) enableAudioVolumeIndication = getenv_bool("AGORA_ENABLE_AUDIO_VOLUME_INDICATION");
   }
+  bool enableAudioRecordingOrPlayout = enableAudioVolumeIndication;
+  {
+    const char* earp = getenv("AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT");
+    if (earp && earp[0]) enableAudioRecordingOrPlayout = getenv_bool("AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT");
+  }
   bool setChannelProfile = false;
   {
     const char* scp = getenv("AGORA_SET_CHANNEL_PROFILE");
@@ -987,7 +994,10 @@ int main(int argc, char* argv[]) {
     }
     ccfg.autoSubscribeAudio = true;
     ccfg.autoSubscribeVideo = receiveVideo;
-    ccfg.enableAudioRecordingOrPlayout = false;
+    ccfg.enableAudioRecordingOrPlayout = enableAudioRecordingOrPlayout;
+    fprintf(stderr,
+            "RtcConnection enableAudioRecordingOrPlayout=%d (AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT; use true for remote volume)\n",
+            ccfg.enableAudioRecordingOrPlayout ? 1 : 0);
 
     connection = service->createRtcConnection(ccfg);
     if (!connection) {

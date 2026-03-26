@@ -10,6 +10,8 @@
  *   AGORA_USE_STRING_UID=1  - string user account mode; AGORA_UID is the account string (enable in Agora Console if required)
  *   AGORA_REGISTER_AUDIO_OBSERVER=0|1  - register playback audio frame observer (default 1)
  *   AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0|1  - enable SDK audio volume indication callback (default 1)
+ *   AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT=0|1 - RtcConnection enable_audio_recording_or_playout (default 1 if volume indication on).
+ *     SDK: use true when subscribing and playing; false can suppress remote speaker volume while PCM observers still run.
  *   AGORA_SET_CHANNEL_PROFILE=0|1  - whether to set channel_profile on connection config (default 0)
  *   AGORA_CHANNEL_PROFILE=COMMUNICATION|LIVE_BROADCASTING (or 0|1)
  *   AGORA_SET_CLIENT_ROLE_TYPE=0|1 - whether to set client_role_type on connection config (default 1)
@@ -918,6 +920,11 @@ int main(int argc, char* argv[]) {
     const char* eavi = getenv("AGORA_ENABLE_AUDIO_VOLUME_INDICATION");
     if (eavi && eavi[0]) enableAudioVolumeIndication = getenv_bool("AGORA_ENABLE_AUDIO_VOLUME_INDICATION");
   }
+  bool enableAudioRecordingOrPlayout = enableAudioVolumeIndication;
+  {
+    const char* earp = getenv("AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT");
+    if (earp && earp[0]) enableAudioRecordingOrPlayout = getenv_bool("AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT");
+  }
   bool setChannelProfile = false;
   {
     const char* scp = getenv("AGORA_SET_CHANNEL_PROFILE");
@@ -1185,7 +1192,10 @@ int main(int argc, char* argv[]) {
     }
     conn_cfg.auto_subscribe_audio         = 1;
     conn_cfg.auto_subscribe_video         = receiveVideo ? 1 : 0;
-    conn_cfg.enable_audio_recording_or_playout = 0;
+    conn_cfg.enable_audio_recording_or_playout = enableAudioRecordingOrPlayout ? 1 : 0;
+    fprintf(stderr,
+            "RtcConnection enable_audio_recording_or_playout=%d (AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT; use 1 for remote volume)\n",
+            (int)conn_cfg.enable_audio_recording_or_playout);
 
     fprintf(stderr, "Connecting to channel '%s' (uid=%s)... receive_video=%d send_audio=%d send_video=%d\n",
             channelId.c_str(), uid.c_str(), receiveVideo ? 1 : 0, sendAudio ? 1 : 0, sendVideo ? 1 : 0);
