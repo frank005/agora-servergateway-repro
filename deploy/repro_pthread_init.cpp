@@ -21,6 +21,7 @@
  *   AGORA_SET_SERVICE_AUDIO_SCENARIO=0|1 — set audioScenario on AgoraServiceConfiguration (default 0)
  *   AGORA_SERVICE_AUDIO_SCENARIO — DEFAULT|CHATROOM|… or 0–10
  *   AGORA_VOLUME_INDICATION_INTERVAL_MS, AGORA_VOLUME_INDICATION_SMOOTH, AGORA_VOLUME_INDICATION_VAD (0|1)
+ *   Note: onAudioVolumeIndication fires twice per interval (local user_id=0 vs remotes). Local vol is often 0 if not publishing audio.
  *   AGORA_SET_LOCAL_USER_AUDIO_SCENARIO=0|1 — call ILocalUser::setAudioScenario (default 0)
  *   AGORA_LOCAL_USER_AUDIO_SCENARIO — same names/numbers as service audio scenario
  *   AGORA_DUMP_BEFORE_MIXING_PCM=0|1 — per-remote raw PCM before mix (default 0); implies audio observer on
@@ -517,8 +518,11 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
     static std::atomic<uint64_t> cbCount{0};
     uint64_t n = ++cbCount;
     if (n % 5 != 0) return;
-    fprintf(stderr, "[audio-volume] callbacks=%llu speakers=%u total=%d",
-            (unsigned long long)n, speakerNumber, totalVolume);
+    const bool local_cb =
+        speakers && speakerNumber == 1 &&
+        (!speakers[0].userId || !speakers[0].userId[0] || std::strcmp(speakers[0].userId, "0") == 0);
+    fprintf(stderr, "[audio-volume] kind=%s callbacks=%llu speakers=%u total=%d",
+            local_cb ? "local" : "remote", (unsigned long long)n, speakerNumber, totalVolume);
     if (speakerNumber > 1)
       fprintf(stderr, " (multi-speaker)");
     if (!speakers || speakerNumber == 0) {
@@ -529,6 +533,8 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
     for (unsigned int i = 0; i < speakerNumber; ++i) {
       const char* uid = speakers[i].userId ? speakers[i].userId : "?";
       fprintf(stderr, " [%u] user_id=%s vol=%u", i, uid, speakers[i].volume);
+      if (local_cb && i == 0)
+        fprintf(stderr, " vad=%u", speakers[i].vad);
       char* end = nullptr;
       unsigned long un = strtoul(uid, &end, 10);
       if (uid[0] && end != uid && *end == '\0')

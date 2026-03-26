@@ -38,6 +38,7 @@
  *   AGORA_SET_SERVICE_AUDIO_SCENARIO=0|1 — set audio_scenario on agora_service_config (default 0)
  *   AGORA_SERVICE_AUDIO_SCENARIO — DEFAULT|GAME_STREAMING|CHATROOM|… or numeric 0–10
  *   AGORA_VOLUME_INDICATION_INTERVAL_MS, AGORA_VOLUME_INDICATION_SMOOTH, AGORA_VOLUME_INDICATION_VAD (0|1)
+ *   Note: volume indication fires local (user_id=0) and remote callbacks; local vol often 0 if not publishing audio.
  *   AGORA_SET_LOCAL_USER_AUDIO_SCENARIO=0|1 — call agora_local_user_set_audio_scenario after get_local_user (default 0)
  *   AGORA_LOCAL_USER_AUDIO_SCENARIO — same names/numbers as service audio scenario
  *   AGORA_LU_CB_USER_INFO_UPDATED=0|1 — wire on_user_info_updated (default 0)
@@ -622,14 +623,26 @@ static void cb_on_user_video_track_subscribed(void* local_user, const char* user
   fprintf(stderr, "Subscribed to remote video track.\n");
 }
 
+/**
+ * SDK fires two on_audio_volume_indication callbacks per interval: one for the local user
+ * (user_id is always "0", volume is local mic/mixing) and one for remote speakers.
+ * With AGORA_SEND_AUDIO=0, local vol/total are often 0 — that is expected; use kind=remote lines for others.
+ */
+static bool is_local_volume_indication(const audio_volume_info* speakers, unsigned int speaker_number) {
+  if (!speakers || speaker_number != 1) return false;
+  const char* u = speakers[0].user_id;
+  return (!u || !u[0] || strcmp(u, "0") == 0);
+}
+
 static void cb_on_audio_volume_indication(void* local_user, const audio_volume_info* speakers,
                                           unsigned int speaker_number, int total_volume) {
   (void)local_user;
   uint64_t n = ++g_audio_volume_cb_count;
   /* Log every 5th callback; always print all speaker slots the SDK returned (see speakers=N). */
   if (n % 5 != 0) return;
-  fprintf(stderr, "[audio-volume] callbacks=%llu speakers=%u total=%d",
-          (unsigned long long)n, speaker_number, total_volume);
+  const bool local_cb = is_local_volume_indication(speakers, speaker_number);
+  fprintf(stderr, "[audio-volume] kind=%s callbacks=%llu speakers=%u total=%d",
+          local_cb ? "local" : "remote", (unsigned long long)n, speaker_number, total_volume);
   if (speaker_number > 1)
     fprintf(stderr, " (multi-speaker)");
   if (!speakers || speaker_number == 0) {
@@ -640,6 +653,8 @@ static void cb_on_audio_volume_indication(void* local_user, const audio_volume_i
   for (unsigned int i = 0; i < speaker_number; ++i) {
     const char* uid = speakers[i].user_id ? speakers[i].user_id : "?";
     fprintf(stderr, " [%u] user_id=%s vol=%u", i, uid, speakers[i].volume);
+    if (local_cb && i == 0)
+      fprintf(stderr, " vad=%u", speakers[i].vad);
     char* end = nullptr;
     unsigned long un = strtoul(uid, &end, 10);
     if (uid[0] && end != uid && *end == '\0')
