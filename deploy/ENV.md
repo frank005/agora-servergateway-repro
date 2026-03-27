@@ -98,6 +98,9 @@ AGORA_ENCRYPTION_SALT=your_salt_here
 |----------|-------------|
 | `AGORA_LOG_FILE` | Path for Agora SDK log file **inside the container** (default `/app/agora_sdk.log`). The repro configures the SDK to write logs here so you can inspect decode/encryption errors. Pull from the container (`docker cp <container>:$AGORA_LOG_FILE ./`) or mount a volume. |
 | `AGORA_HOST_LOG_FILE` | Optional **host-only** path used by the helper script `deploy/run_with_logs.sh`. When set (default `./logs/agora_sdk.log`), the script copies `AGORA_LOG_FILE` from the container to this host path after the run finishes. |
+| `AGORA_HOST_LOG_DIR` | **Host / `run_with_logs.sh` only:** Directory where the script copies **all** log-like files from `/app` in the container (`*.log` and `*.log.*`, any subdirectory). Default: `$(dirname $AGORA_HOST_LOG_FILE)/agora_sdk_logs_all`. Use this when the SDK writes multiple or rotated files. |
+| `AGORA_HOST_COPY_ALL_APP_LOGS` | **Host / `run_with_logs.sh` only:** Set to `0` to skip collecting all `/app` logs into `AGORA_HOST_LOG_DIR` (default `1`, enabled). |
+| `AGORA_HOST_COPY_APP_DIR` | **Host / `run_with_logs.sh` only:** Set to `1` to also copy the **entire** `/app` tree to `$(dirname $AGORA_HOST_LOG_FILE)/agora_app_full_snapshot` (binaries and libs included; useful if logs use nonstandard names). Default `0`. |
 | `AGORA_REPRO_IMAGE` | **Host / `run_with_logs.sh` only:** Docker image to run (default `servergateway-repro`, same as root `docker compose build repro`). |
 
 ## Bisect / debug
