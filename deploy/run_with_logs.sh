@@ -11,6 +11,7 @@
 #
 # After the run, the script also copies every log-like file under /app (*.log, *.log.*, any depth)
 # into AGORA_HOST_LOG_DIR (default: <dirname of AGORA_HOST_LOG_FILE>/agora_sdk_logs_all).
+# AGORA_HOST_LOG_DIR, AGORA_HOST_COPY_ALL_APP_LOGS, AGORA_HOST_COPY_APP_DIR: shell env or deploy/.env (same precedence as AGORA_HOST_LOG_FILE).
 #
 # In-container primary log path defaults to /app/agora_sdk.log; override with AGORA_LOG_FILE
 # (shell or deploy/.env).
@@ -70,13 +71,26 @@ if [[ "${HOST_LOG_PATH}" != /* ]]; then
 fi
 
 # Directory on the host for all log-like files copied from /app (recursive)
+# Precedence: shell env > deploy/.env > default beside primary host log
 if [[ -n "${AGORA_HOST_LOG_DIR:-}" ]]; then
   HOST_LOG_DIR="${AGORA_HOST_LOG_DIR}"
 else
+  HOST_LOG_DIR="$(read_env_var AGORA_HOST_LOG_DIR "")"
+fi
+if [[ -z "${HOST_LOG_DIR}" ]]; then
   HOST_LOG_DIR="$(dirname "${HOST_LOG_PATH}")/agora_sdk_logs_all"
 fi
 if [[ "${HOST_LOG_DIR}" != /* ]]; then
   HOST_LOG_DIR="${REPO_ROOT}/${HOST_LOG_DIR}"
+fi
+
+COPY_ALL_APP_LOGS="${AGORA_HOST_COPY_ALL_APP_LOGS:-}"
+if [[ -z "${COPY_ALL_APP_LOGS}" ]]; then
+  COPY_ALL_APP_LOGS="$(read_env_var AGORA_HOST_COPY_ALL_APP_LOGS "1")"
+fi
+COPY_APP_DIR_FLAG="${AGORA_HOST_COPY_APP_DIR:-}"
+if [[ -z "${COPY_APP_DIR_FLAG}" ]]; then
+  COPY_APP_DIR_FLAG="$(read_env_var AGORA_HOST_COPY_APP_DIR "0")"
 fi
 
 # Default matches root docker-compose.yml image (docker compose build repro).
@@ -137,7 +151,7 @@ cleanup_tmpdir() {
 }
 trap cleanup_tmpdir EXIT
 
-if [[ "${AGORA_HOST_COPY_ALL_APP_LOGS:-1}" != "0" ]]; then
+if [[ "${COPY_ALL_APP_LOGS}" != "0" ]]; then
   TMPDIR_APP="$(mktemp -d)"
   if docker cp "${CONTAINER_NAME}:/app/." "${TMPDIR_APP}/" 2>/dev/null; then
     mkdir -p "${HOST_LOG_DIR}"
@@ -160,7 +174,7 @@ if [[ "${AGORA_HOST_COPY_ALL_APP_LOGS:-1}" != "0" ]]; then
   fi
 fi
 
-if [[ "${AGORA_HOST_COPY_APP_DIR:-0}" == "1" ]]; then
+if [[ "${COPY_APP_DIR_FLAG}" == "1" ]]; then
   APP_SNAP="$(dirname "${HOST_LOG_PATH}")/agora_app_full_snapshot"
   mkdir -p "${APP_SNAP}"
   if docker cp "${CONTAINER_NAME}:/app/." "${APP_SNAP}/" 2>/dev/null; then
