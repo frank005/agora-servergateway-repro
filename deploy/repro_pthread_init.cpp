@@ -8,10 +8,14 @@
  *   AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0|1 - enable SDK audio volume indication callback (default 1)
  *   AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT=0|1 - RtcConnection enableAudioRecordingOrPlayout (default 1 if volume indication on).
  *     If false, remote [audio-volume][remote] may stay empty while playback PCM callbacks still run.
+ *   AGORA_ENABLE_AUDIO_PROCESSOR=0|1 - AgoraServiceConfiguration enableAudioProcessor (default 1).
+ *   AGORA_ENABLE_SERVICE_AUDIO_DEVICE=0|1 - AgoraServiceConfiguration enableAudioDevice (default 0). Independent of RECORDING_OR_PLAYOUT;
+ *     set 1 only if you need the full device path (may SIGSEGV in cap-dropped containers with RLIMIT_RTPRIO=0).
  *   AGORA_SET_CHANNEL_PROFILE=0|1  - whether to set channelProfile on connection config (default 0)
  *   AGORA_CHANNEL_PROFILE=COMMUNICATION|LIVE_BROADCASTING (or 0|1)
  *   AGORA_SET_CLIENT_ROLE_TYPE=0|1 - whether to set clientRoleType on connection config (default 1)
  *   AGORA_CLIENT_ROLE_TYPE=AUDIENCE|BROADCASTER (or 2|1)
+ *   AGORA_REGISTER_CONN_OBSERVER=0|1 - IRtcConnectionObserver (onUserJoined/onUserLeft; default 1). Needed to log remote_in_channel count.
  *   AGORA_REGISTER_LOCAL_USER_OBSERVER=0|1 - register local user observer callbacks (default 1)
  *   AGORA_LU_CB_AUDIO_SUB=0|1 - local user callback onUserAudioTrackSubscribed (default 1)
  *   AGORA_LU_CB_VIDEO_SUB=0|1 - local user callback onUserVideoTrackSubscribed (default 1)
@@ -55,6 +59,7 @@
 #include <memory>
 #include <map>
 #include <mutex>
+#include <unordered_set>
 #include <sys/stat.h>
 #include <pthread.h>
 #include <sched.h>
@@ -343,6 +348,113 @@ static void close_pcm_dump_files() {
 }
 }  // namespace
 
+/* ---- Channel roster (from IRtcConnectionObserver join/leave; not the same as volume-indication rows) ---- */
+static std::mutex g_channel_remote_mutex;
+static std::unordered_set<std::string> g_channel_remote_ids;
+/* Lock-free count so onAudioVolumeIndication / onTransportStats never take g_channel_remote_mutex (avoids
+ * deadlock if the SDK calls those while join/leave holds the mutex on the same thread). */
+static std::atomic<size_t> g_channel_remote_count{0};
+
+static size_t channel_remote_user_count() {
+  return g_channel_remote_count.load(std::memory_order_relaxed);
+}
+
+static void channel_remote_clear() {
+  std::lock_guard<std::mutex> lock(g_channel_remote_mutex);
+  g_channel_remote_ids.clear();
+  g_channel_remote_count.store(0, std::memory_order_relaxed);
+}
+
+struct ReproRtcConnectionObserver : public agora::rtc::IRtcConnectionObserver {
+  void onConnected(const agora::rtc::TConnectionInfo& connectionInfo,
+                   agora::rtc::CONNECTION_CHANGED_REASON_TYPE reason) override {
+    (void)connectionInfo;
+    fprintf(stderr, "[channel] onConnected reason=%d\n", (int)reason);
+  }
+  void onDisconnected(const agora::rtc::TConnectionInfo& connectionInfo,
+                      agora::rtc::CONNECTION_CHANGED_REASON_TYPE reason) override {
+    (void)connectionInfo;
+    fprintf(stderr, "[channel] onDisconnected reason=%d\n", (int)reason);
+    channel_remote_clear();
+  }
+  void onConnecting(const agora::rtc::TConnectionInfo& connectionInfo,
+                    agora::rtc::CONNECTION_CHANGED_REASON_TYPE reason) override {
+    (void)connectionInfo;
+    (void)reason;
+  }
+  void onReconnecting(const agora::rtc::TConnectionInfo& connectionInfo,
+                      agora::rtc::CONNECTION_CHANGED_REASON_TYPE reason) override {
+    (void)connectionInfo;
+    fprintf(stderr, "[channel] onReconnecting reason=%d\n", (int)reason);
+  }
+  void onReconnected(const agora::rtc::TConnectionInfo& connectionInfo,
+                     agora::rtc::CONNECTION_CHANGED_REASON_TYPE reason) override {
+    (void)connectionInfo;
+    fprintf(stderr, "[channel] onReconnected reason=%d\n", (int)reason);
+  }
+  void onCustomUserInfoUpdated(agora::user_id_t userId, const char* customUserInfo) override {
+    (void)userId;
+    (void)customUserInfo;
+  }
+  void onConnectionLost(const agora::rtc::TConnectionInfo& connectionInfo) override {
+    (void)connectionInfo;
+    fprintf(stderr, "[channel] onConnectionLost\n");
+    channel_remote_clear();
+  }
+  void onLastmileQuality(const agora::rtc::QUALITY_TYPE quality) override { (void)quality; }
+  void onLastmileProbeResult(const agora::rtc::LastmileProbeResult& result) override { (void)result; }
+  void onTokenPrivilegeWillExpire(const char* token) override { (void)token; }
+  void onTokenPrivilegeDidExpire() override {}
+  void onConnectionFailure(const agora::rtc::TConnectionInfo& connectionInfo,
+                           agora::rtc::CONNECTION_CHANGED_REASON_TYPE reason) override {
+    (void)connectionInfo;
+    fprintf(stderr, "[channel] onConnectionFailure reason=%d\n", (int)reason);
+  }
+  void onUserJoined(agora::user_id_t userId) override {
+    std::string id(userId ? userId : "");
+    size_t n = 0;
+    {
+      std::lock_guard<std::mutex> lock(g_channel_remote_mutex);
+      if (g_channel_remote_ids.insert(id).second)
+        g_channel_remote_count.fetch_add(1, std::memory_order_relaxed);
+      n = g_channel_remote_ids.size();
+    }
+    fprintf(stderr, "[channel] remote joined user_id=%s remote_in_channel=%zu\n", id.c_str(), n);
+  }
+  void onUserLeft(agora::user_id_t userId, agora::rtc::USER_OFFLINE_REASON_TYPE reason) override {
+    std::string id(userId ? userId : "");
+    size_t n = 0;
+    {
+      std::lock_guard<std::mutex> lock(g_channel_remote_mutex);
+      if (g_channel_remote_ids.erase(id) > 0)
+        g_channel_remote_count.fetch_sub(1, std::memory_order_relaxed);
+      n = g_channel_remote_ids.size();
+    }
+    fprintf(stderr, "[channel] remote left user_id=%s reason=%d remote_in_channel=%zu\n", id.c_str(), (int)reason,
+            n);
+  }
+  void onTransportStats(const agora::rtc::RtcStats& stats) override {
+    static std::atomic<unsigned> tick{0};
+    unsigned t = ++tick;
+    if (t % 10u == 1u)
+      fprintf(stderr,
+              "[channel] onTransportStats (every ~20s): sdk_user_count=%u includes all users in channel; "
+              "remote_in_channel=%zu from join/leave\n",
+              stats.userCount, channel_remote_user_count());
+  }
+  void onChannelMediaRelayStateChanged(int state, int code) override { (void)state; (void)code; }
+};
+
+static ReproRtcConnectionObserver g_repro_conn_obs;
+static bool g_repro_conn_obs_registered = false;
+
+static void repro_unregister_conn_observer(agora::rtc::IRtcConnection* connection) {
+  if (!connection || !g_repro_conn_obs_registered) return;
+  connection->unregisterObserver(&g_repro_conn_obs);
+  g_repro_conn_obs_registered = false;
+  channel_remote_clear();
+}
+
 /* ---- Audio: receive playback (mixed remote) ---- */
 class PlaybackAudioObserver : public agora::media::IAudioFrameObserverBase {
  public:
@@ -519,17 +631,19 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
     if (!enable_volume_indication_cb_) return;
     static std::atomic<uint64_t> seqLocal{0};
     static std::atomic<uint64_t> seqRemote{0};
+    /* Local callback: exactly one row with uid NULL or "0" (see NGIAgoraLocalUser.h). Do not treat "" as
+     * local — empty userId on a single-speaker row was misclassified and hid remote volume lines. */
+    const char* vol_uid = (speakers && speakerNumber >= 1) ? speakers[0].userId : nullptr;
     const bool local_cb =
-        speakers && speakerNumber == 1 &&
-        (!speakers[0].userId || !speakers[0].userId[0] || std::strcmp(speakers[0].userId, "0") == 0);
+        speakers && speakerNumber == 1 && (vol_uid == nullptr || std::strcmp(vol_uid, "0") == 0);
     uint64_t seq = local_cb ? ++seqLocal : ++seqRemote;
     if (local_cb) {
       if (seq % 20 != 0) return;
-    } else {
-      if (seq % 5 != 0) return;
     }
-    fprintf(stderr, "[audio-volume][%s] seq=%llu speakers=%u total=%d",
-            local_cb ? "local" : "remote", (unsigned long long)seq, speakerNumber, totalVolume);
+    /* Remote: log every callback (SDK rate-limits by interval). */
+    fprintf(stderr, "[audio-volume][%s] seq=%llu remote_in_channel=%zu speakers=%u total=%d",
+            local_cb ? "local" : "remote", (unsigned long long)seq, channel_remote_user_count(),
+            speakerNumber, totalVolume);
     if (!local_cb && speakerNumber > 1)
       fprintf(stderr, " (multi-speaker)");
     if (!speakers || speakerNumber == 0) {
@@ -725,6 +839,16 @@ int main(int argc, char* argv[]) {
     const char* earp = getenv("AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT");
     if (earp && earp[0]) enableAudioRecordingOrPlayout = getenv_bool("AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT");
   }
+  bool enableServiceAudioProcessor = true;
+  {
+    const char* eap = getenv("AGORA_ENABLE_AUDIO_PROCESSOR");
+    if (eap && eap[0]) enableServiceAudioProcessor = getenv_bool("AGORA_ENABLE_AUDIO_PROCESSOR");
+  }
+  bool enableServiceAudioDevice = false;
+  {
+    const char* esad = getenv("AGORA_ENABLE_SERVICE_AUDIO_DEVICE");
+    if (esad && esad[0]) enableServiceAudioDevice = getenv_bool("AGORA_ENABLE_SERVICE_AUDIO_DEVICE");
+  }
   bool setChannelProfile = false;
   {
     const char* scp = getenv("AGORA_SET_CHANNEL_PROFILE");
@@ -737,6 +861,11 @@ int main(int argc, char* argv[]) {
     if (scr && scr[0]) setClientRoleType = getenv_bool("AGORA_SET_CLIENT_ROLE_TYPE");
   }
   auto clientRoleType = parse_client_role_type(getenv_trimmed_or("AGORA_CLIENT_ROLE_TYPE", "AUDIENCE").c_str());
+  bool registerConnObserver = true;
+  {
+    const char* rco = getenv("AGORA_REGISTER_CONN_OBSERVER");
+    if (rco && rco[0]) registerConnObserver = getenv_bool("AGORA_REGISTER_CONN_OBSERVER");
+  }
   bool registerLocalUserObserver = true;
   {
     const char* rluo = getenv("AGORA_REGISTER_LOCAL_USER_OBSERVER");
@@ -881,8 +1010,12 @@ int main(int argc, char* argv[]) {
 
   agora::base::AgoraServiceConfiguration config;
   config.appId = appId.c_str();
-  config.enableAudioProcessor = 1;
-  config.enableAudioDevice = 0;
+  config.enableAudioProcessor = enableServiceAudioProcessor ? 1 : 0;
+  config.enableAudioDevice = enableServiceAudioDevice ? 1 : 0;
+  fprintf(stderr,
+          "Service enableAudioProcessor=%d enableAudioDevice=%d (AGORA_ENABLE_AUDIO_PROCESSOR / "
+          "AGORA_ENABLE_SERVICE_AUDIO_DEVICE; device default 0 for restricted containers)\n",
+          config.enableAudioProcessor ? 1 : 0, config.enableAudioDevice ? 1 : 0);
   config.enableVideo = (receiveVideo || sendVideo) ? 1 : 0;
   config.useStringUid = useStringUid ? 1 : 0;
   if (useStringUid)
@@ -1036,20 +1169,6 @@ int main(int argc, char* argv[]) {
       fprintf(stderr, "AGORA_SET_LOCAL_USER_AUDIO_SCENARIO=0: not calling setAudioScenario on local user.\n");
     }
 
-    if (enableAudioVolumeIndication) {
-      int vir = localUser->setAudioVolumeIndicationParameters(volIndIntervalMs, volIndSmooth, volIndVad);
-      if (vir == 0) {
-        fprintf(stderr, "Audio volume indication enabled (interval=%dms smooth=%d vad=%d).\n",
-                volIndIntervalMs, volIndSmooth, volIndVad ? 1 : 0);
-        fprintf(stderr,
-                "Volume logs: [audio-volume][local] = mic/mixing (often 0 if AGORA_SEND_AUDIO=0); "
-                "[audio-volume][remote] = remote speakers. Throttle: local 1/20, remote 1/5.\n");
-      } else
-        fprintf(stderr, "setAudioVolumeIndicationParameters() failed %d\n", vir);
-    } else {
-      fprintf(stderr, "AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0: audio volume indication disabled.\n");
-    }
-
     /* Enable built-in encryption before connect if requested. Must match other clients in channel (same mode, key, salt). */
     if (encryptionEnable) {
       if (encryptionSecret.empty()) {
@@ -1183,9 +1302,22 @@ int main(int argc, char* argv[]) {
       }
     }
 
+    if (registerConnObserver) {
+      int obsr = connection->registerObserver(&g_repro_conn_obs, nullptr);
+      if (obsr == 0) {
+        g_repro_conn_obs_registered = true;
+        fprintf(stderr, "Connection observer registered (onUserJoined/onUserLeft -> remote_in_channel).\n");
+      } else {
+        fprintf(stderr, "registerObserver() failed %d\n", obsr);
+      }
+    } else {
+      fprintf(stderr, "AGORA_REGISTER_CONN_OBSERVER=0: no join/leave; remote_in_channel in volume logs stays 0.\n");
+    }
+
     ret = connection->connect(token.c_str(), channelId.c_str(), uid.c_str());
     if (ret != 0) {
       fprintf(stderr, "connect() failed with %d\n", ret);
+      repro_unregister_conn_observer(connection.get());
       connection = nullptr;
       service->release();
       return 1;
@@ -1199,9 +1331,25 @@ int main(int argc, char* argv[]) {
               "Connected to channel '%s' join_user_id='%s' local_user_id='%s' internal_uid=%u\n",
               channelId.c_str(), uid.c_str(), lid, (unsigned)ci.internalUid);
     }
+    if (enableAudioVolumeIndication) {
+      int vir = localUser->setAudioVolumeIndicationParameters(volIndIntervalMs, volIndSmooth, volIndVad);
+      if (vir == 0) {
+        fprintf(stderr,
+                "Audio volume indication enabled after join (interval=%dms smooth=%d vad=%d).\n",
+                volIndIntervalMs, volIndSmooth, volIndVad ? 1 : 0);
+        fprintf(stderr,
+                "Volume logs: [audio-volume][local] throttled 1/20; [audio-volume][remote] every tick; "
+                "remote_in_channel= from [channel] join/leave. Remote volume rows are loudest speakers (often <=3), "
+                "not full roster.\n");
+      } else
+        fprintf(stderr, "setAudioVolumeIndicationParameters() failed %d\n", vir);
+    } else {
+      fprintf(stderr, "AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0: audio volume indication disabled.\n");
+    }
     if (stopAfter == "connect") {
       fprintf(stderr, "Stopping after connect (AGORA_REPRO_STOP_AFTER=connect). Trigger was connect().\n");
       if (userObserver) userObserver->teardown();
+      repro_unregister_conn_observer(connection.get());
       connection->disconnect();
       connection = nullptr;
       service->release();
@@ -1228,6 +1376,7 @@ int main(int argc, char* argv[]) {
       if (sendAudio && sendAudioTrack) localUser->unpublishAudio(sendAudioTrack);
       if (sendVideo && sendVideoTrack) localUser->unpublishVideo(sendVideoTrack);
       if (userObserver) userObserver->teardown();
+      repro_unregister_conn_observer(connection.get());
       connection->disconnect();
       connection = nullptr;
       service->release();
@@ -1264,6 +1413,7 @@ int main(int argc, char* argv[]) {
             (unsigned long long)playbackVideoObs.framesReceived_.load());
     close_pcm_dump_files();
     if (userObserver) userObserver->teardown();
+    repro_unregister_conn_observer(connection.get());
     connection->disconnect();
     connection = nullptr;
   }

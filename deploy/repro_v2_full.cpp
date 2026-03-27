@@ -12,11 +12,13 @@
  *   AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0|1  - enable SDK audio volume indication callback (default 1)
  *   AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT=0|1 - RtcConnection enable_audio_recording_or_playout (default 1 if volume indication on).
  *     SDK: use true when subscribing and playing; false can suppress remote speaker volume while PCM observers still run.
+ *   AGORA_ENABLE_AUDIO_PROCESSOR=0|1 - agora_service_config enable_audio_processor (default 1).
+ *   AGORA_ENABLE_SERVICE_AUDIO_DEVICE=0|1 - agora_service_config enable_audio_device (default 0). Independent of RECORDING_OR_PLAYOUT.
  *   AGORA_SET_CHANNEL_PROFILE=0|1  - whether to set channel_profile on connection config (default 0)
  *   AGORA_CHANNEL_PROFILE=COMMUNICATION|LIVE_BROADCASTING (or 0|1)
  *   AGORA_SET_CLIENT_ROLE_TYPE=0|1 - whether to set client_role_type on connection config (default 1)
  *   AGORA_CLIENT_ROLE_TYPE=AUDIENCE|BROADCASTER (or 2|1)
- *   AGORA_REGISTER_CONN_OBSERVER=0|1 - register rtc_conn observer callbacks (default 0 for stability)
+ *   AGORA_REGISTER_CONN_OBSERVER=0|1 - register rtc_conn observer (on_user_joined/on_user_left; default 1). Needed for remote_in_channel in logs.
  *   AGORA_REGISTER_LOCAL_USER_OBSERVER=0|1 - register local_user observer callbacks (default 1; match C++ repro)
  *   AGORA_LU_CB_AUDIO_SUB=0|1 - local_user_observer.on_user_audio_track_subscribed (default 1)
  *   AGORA_LU_CB_VIDEO_SUB=0|1 - local_user_observer.on_user_video_track_subscribed (default 1)
@@ -61,6 +63,7 @@
 #include <vector>
 #include <map>
 #include <mutex>
+#include <unordered_set>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -122,6 +125,21 @@ static std::string getenv_trimmed_or(const char* name, const char* def) {
   }
   s.resize(len);
   return s;
+}
+
+/* Tracked from connection observer join/leave (full remote roster; not same as volume-indication row count). */
+static std::mutex g_channel_remote_mutex;
+static std::unordered_set<std::string> g_channel_remote_ids;
+static std::atomic<size_t> g_channel_remote_count{0};
+
+static size_t channel_remote_user_count() {
+  return g_channel_remote_count.load(std::memory_order_relaxed);
+}
+
+static void channel_remote_clear() {
+  std::lock_guard<std::mutex> lock(g_channel_remote_mutex);
+  g_channel_remote_ids.clear();
+  g_channel_remote_count.store(0, std::memory_order_relaxed);
 }
 
 static bool getenv_bool(const char* name) {
@@ -634,7 +652,8 @@ static void cb_on_user_video_track_subscribed(void* local_user, const char* user
 static bool is_local_volume_indication(const audio_volume_info* speakers, unsigned int speaker_number) {
   if (!speakers || speaker_number != 1) return false;
   const char* u = speakers[0].user_id;
-  return (!u || !u[0] || strcmp(u, "0") == 0);
+  /* Local row: uid NULL or "0" only. Empty string "" is not documented as local and was mis-tagged. */
+  return (u == nullptr || strcmp(u, "0") == 0);
 }
 
 static void cb_on_audio_volume_indication(void* local_user, const audio_volume_info* speakers,
@@ -646,11 +665,11 @@ static void cb_on_audio_volume_indication(void* local_user, const audio_volume_i
   uint64_t seq = local_cb ? ++g_vol_ind_seq_local : ++g_vol_ind_seq_remote;
   if (local_cb) {
     if (seq % 20 != 0) return;
-  } else {
-    if (seq % 5 != 0) return;
   }
-  fprintf(stderr, "[audio-volume][%s] seq=%llu speakers=%u total=%d",
-          local_cb ? "local" : "remote", (unsigned long long)seq, speaker_number, total_volume);
+  /* Remote: log every callback (SDK already rate-limits by interval). */
+  fprintf(stderr, "[audio-volume][%s] seq=%llu remote_in_channel=%zu speakers=%u total=%d",
+          local_cb ? "local" : "remote", (unsigned long long)seq, channel_remote_user_count(), speaker_number,
+          total_volume);
   if (!local_cb && speaker_number > 1)
     fprintf(stderr, " (multi-speaker)");
   if (!speakers || speaker_number == 0) {
@@ -718,6 +737,7 @@ static void cb_on_connected(void* conn, const rtc_conn_info* info, int reason) {
 }
 static void cb_on_disconnected(void* conn, const rtc_conn_info* info, int reason) {
   (void)conn;
+  channel_remote_clear();
   if (info) {
     const char* ch = info->channel_id ? info->channel_id : "?";
     const char* lid = info->local_user_id ? info->local_user_id : "?";
@@ -736,17 +756,32 @@ static void cb_on_conn_error(void* conn, int error, const char* msg)            
 static void cb_on_conn_warning(void* conn, int warning, const char* msg)           { (void)conn; fprintf(stderr, "[conn] Warning %d: %s\n", warning, msg ? msg : ""); }
 static void cb_on_user_joined(void* conn, const char* user_id) {
   (void)conn;
-  log_remote_user_id_uid_int(stderr, "[conn] Remote user joined:", user_id);
+  std::string id(user_id ? user_id : "");
+  {
+    std::lock_guard<std::mutex> lock(g_channel_remote_mutex);
+    if (g_channel_remote_ids.insert(id).second)
+      g_channel_remote_count.fetch_add(1, std::memory_order_relaxed);
+  }
+  log_remote_user_id_uid_int(stderr, "[channel] Remote user joined:", user_id);
+  fprintf(stderr, "[channel] remote_in_channel=%zu\n", channel_remote_user_count());
 }
 static void cb_on_user_left(void* conn, const char* user_id, int reason) {
   (void)conn;
+  std::string id(user_id ? user_id : "");
+  {
+    std::lock_guard<std::mutex> lock(g_channel_remote_mutex);
+    if (g_channel_remote_ids.erase(id) > 0)
+      g_channel_remote_count.fetch_sub(1, std::memory_order_relaxed);
+  }
   const char* u = user_id ? user_id : "?";
   char* end = nullptr;
   unsigned long n = strtoul(u, &end, 10);
   if (end != u && *end == '\0')
-    fprintf(stderr, "[conn] Remote user left: user_id=%s uid_int=%lu reason=%d\n", u, n, reason);
+    fprintf(stderr, "[channel] Remote user left: user_id=%s uid_int=%lu reason=%d remote_in_channel=%zu\n", u, n,
+            reason, channel_remote_user_count());
   else
-    fprintf(stderr, "[conn] Remote user left: user_id=%s uid_int=n/a account/string reason=%d\n", u, reason);
+    fprintf(stderr, "[channel] Remote user left: user_id=%s uid_int=n/a reason=%d remote_in_channel=%zu\n", u,
+            reason, channel_remote_user_count());
 }
 static void cb_on_token_expire(void* conn, const char* token)                      { (void)conn; (void)token; fprintf(stderr, "[conn] Token privilege will expire.\n"); }
 
@@ -925,6 +960,16 @@ int main(int argc, char* argv[]) {
     const char* earp = getenv("AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT");
     if (earp && earp[0]) enableAudioRecordingOrPlayout = getenv_bool("AGORA_ENABLE_AUDIO_RECORDING_OR_PLAYOUT");
   }
+  bool enableServiceAudioProcessor = true;
+  {
+    const char* eap = getenv("AGORA_ENABLE_AUDIO_PROCESSOR");
+    if (eap && eap[0]) enableServiceAudioProcessor = getenv_bool("AGORA_ENABLE_AUDIO_PROCESSOR");
+  }
+  bool enableServiceAudioDevice = false;
+  {
+    const char* esad = getenv("AGORA_ENABLE_SERVICE_AUDIO_DEVICE");
+    if (esad && esad[0]) enableServiceAudioDevice = getenv_bool("AGORA_ENABLE_SERVICE_AUDIO_DEVICE");
+  }
   bool setChannelProfile = false;
   {
     const char* scp = getenv("AGORA_SET_CHANNEL_PROFILE");
@@ -937,7 +982,7 @@ int main(int argc, char* argv[]) {
     if (scr && scr[0]) setClientRoleType = getenv_bool("AGORA_SET_CLIENT_ROLE_TYPE");
   }
   int clientRoleType = parse_client_role_type(getenv_trimmed_or("AGORA_CLIENT_ROLE_TYPE", "AUDIENCE").c_str());
-  bool registerConnObserver = false;
+  bool registerConnObserver = true;
   {
     const char* rco = getenv("AGORA_REGISTER_CONN_OBSERVER");
     if (rco && rco[0]) registerConnObserver = getenv_bool("AGORA_REGISTER_CONN_OBSERVER");
@@ -1102,8 +1147,12 @@ int main(int argc, char* argv[]) {
 
   agora_service_config svc_cfg = {};
   svc_cfg.app_id                = appId.c_str();
-  svc_cfg.enable_audio_processor = 1;
-  svc_cfg.enable_audio_device    = 0;
+  svc_cfg.enable_audio_processor = enableServiceAudioProcessor ? 1 : 0;
+  svc_cfg.enable_audio_device    = enableServiceAudioDevice ? 1 : 0;
+  fprintf(stderr,
+          "Service enable_audio_processor=%d enable_audio_device=%d (AGORA_ENABLE_AUDIO_PROCESSOR / "
+          "AGORA_ENABLE_SERVICE_AUDIO_DEVICE; device default 0 for restricted containers)\n",
+          (int)svc_cfg.enable_audio_processor, (int)svc_cfg.enable_audio_device);
   svc_cfg.enable_video           = (receiveVideo || sendVideo) ? 1 : 0;
   svc_cfg.use_string_uid         = useStringUid ? 1 : 0;
   if (useStringUid)
@@ -1268,20 +1317,6 @@ int main(int argc, char* argv[]) {
       else fprintf(stderr, "agora_local_user_set_audio_scenario() failed %d\n", asr);
     } else {
       fprintf(stderr, "AGORA_SET_LOCAL_USER_AUDIO_SCENARIO=0: not calling agora_local_user_set_audio_scenario.\n");
-    }
-
-    if (enableAudioVolumeIndication) {
-      int vir = g_luser_set_volume_indication(local_user, volIndIntervalMs, volIndSmooth, volIndVad);
-      if (vir == 0) {
-        fprintf(stderr, "Audio volume indication enabled (interval=%dms smooth=%d vad=%d).\n",
-                volIndIntervalMs, volIndSmooth, volIndVad ? 1 : 0);
-        fprintf(stderr,
-                "Volume logs: [audio-volume][local] = mic/mixing (often 0 if AGORA_SEND_AUDIO=0); "
-                "[audio-volume][remote] = remote speakers. Throttle: local 1/20, remote 1/5.\n");
-      } else
-        fprintf(stderr, "agora_local_user_set_audio_volume_indication_parameters() failed %d\n", vir);
-    } else {
-      fprintf(stderr, "AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0: audio volume indication disabled.\n");
     }
 
     /* Audio frame observer */
@@ -1462,6 +1497,22 @@ int main(int argc, char* argv[]) {
     fprintf(stderr,
             "agora_rtc_conn_connect() OK; join_user_id='%s' (see [conn] Connected for local_user_id + internal_uid).\n",
             uid.c_str());
+
+    if (enableAudioVolumeIndication) {
+      int vir = g_luser_set_volume_indication(local_user, volIndIntervalMs, volIndSmooth, volIndVad);
+      if (vir == 0) {
+        fprintf(stderr,
+                "Audio volume indication enabled after join (interval=%dms smooth=%d vad=%d).\n",
+                volIndIntervalMs, volIndSmooth, volIndVad ? 1 : 0);
+        fprintf(stderr,
+                "Volume logs: [audio-volume][local] throttled 1/20; [audio-volume][remote] every tick; "
+                "remote_in_channel= from [channel] join/leave. Remote volume rows are loudest speakers (often <=3), "
+                "not full roster.\n");
+      } else
+        fprintf(stderr, "agora_local_user_set_audio_volume_indication_parameters() failed %d\n", vir);
+    } else {
+      fprintf(stderr, "AGORA_ENABLE_AUDIO_VOLUME_INDICATION=0: audio volume indication disabled.\n");
+    }
 
     if (stopAfter == "connect") {
       fprintf(stderr, "Stopping after connect (AGORA_REPRO_STOP_AFTER=connect).\n");
