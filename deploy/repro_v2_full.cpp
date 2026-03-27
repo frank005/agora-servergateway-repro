@@ -24,7 +24,8 @@
  *   AGORA_LU_CB_VIDEO_SUB=0|1 - local_user_observer.on_user_video_track_subscribed (default 1)
  *   AGORA_LU_CB_VOLUME_IND=0|1 - on_audio_volume_indication (default follows AGORA_ENABLE_AUDIO_VOLUME_INDICATION; set 0 to disable callback only)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
- *   AGORA_SEND_AUDIO=1    - publish local audio (440 Hz PCM tone, 16 kHz mono)
+ *   AGORA_AUDIO_SAMPLE_RATE_HZ — PCM for publish tone + playback frame params (8000, 16000, 32000, 44100, 48000; default 48000)
+ *   AGORA_SEND_AUDIO=1    - publish local audio (440 Hz PCM tone, mono)
  *   AGORA_SEND_VIDEO=1    - publish local video (720p I420 badge pattern)
  *   AGORA_JOIN_DURATION_SEC=N - stay N seconds; 0 = until Ctrl+C (default 60)
  *   AGORA_REPRO_STOP_AFTER=init|create_local_audio_track|connect|publish
@@ -93,6 +94,9 @@
  * ============================================================ */
 
 static volatile bool g_exit = false;
+/* Set from AGORA_AUDIO_SAMPLE_RATE_HZ in main() before connection / send_audio_loop. */
+static int g_audio_sample_rate_hz = 48000;
+static int g_audio_samples_per_call_10ms = 480;
 
 static void sig_handler(int sig) {
   const char* name = (sig == SIGABRT) ? "SIGABRT" : (sig == SIGSEGV) ? "SIGSEGV" :
@@ -233,6 +237,19 @@ static int getenv_int_or(const char* name, int def) {
   if (end == v) return def;
   return (int)n;
 }
+
+static int clamp_audio_sample_rate_hz(int r) {
+  const int allowed[] = {8000, 16000, 32000, 44100, 48000};
+  for (int a : allowed) {
+    if (r == a) return r;
+  }
+  fprintf(stderr,
+          "AGORA_AUDIO_SAMPLE_RATE_HZ=%d is not supported; using 48000 "
+          "(allowed: 8000, 16000, 32000, 44100, 48000).\n",
+          r);
+  return 48000;
+}
+
 static bool getenv_bool_default(const char* name, bool def) {
   const char* v = getenv(name);
   if (!v || !v[0]) return def;
@@ -603,8 +620,11 @@ static int cb_on_get_audio_frame_position(void*) {
   return pos;
 }
 static audio_params cb_on_get_playback_audio_frame_param(void*) {
-  audio_params p = {}; p.sample_rate = 16000; p.channels = 1;
-  p.mode = RAW_AUDIO_FRAME_OP_MODE_READ_ONLY; p.samples_per_call = 160;
+  audio_params p = {};
+  p.sample_rate = g_audio_sample_rate_hz;
+  p.channels = 1;
+  p.mode = RAW_AUDIO_FRAME_OP_MODE_READ_ONLY;
+  p.samples_per_call = g_audio_samples_per_call_10ms;
   return p;
 }
 static audio_params cb_on_get_record_audio_frame_param(void*)         { audio_params p = {}; return p; }
@@ -786,19 +806,19 @@ static void cb_on_user_left(void* conn, const char* user_id, int reason) {
 static void cb_on_token_expire(void* conn, const char* token)                      { (void)conn; (void)token; fprintf(stderr, "[conn] Token privilege will expire.\n"); }
 
 /* ============================================================
- * Send audio thread: 440 Hz PCM tone, 16 kHz mono, 10 ms chunks
+ * Send audio thread: 440 Hz PCM tone, mono at g_audio_sample_rate_hz, 10 ms chunks
  * (identical behavior to repro_pthread_init.cpp)
  * ============================================================ */
 
 struct AudioSendArgs { void* sender; };
 
 static void send_audio_loop(AudioSendArgs a) {
-  const uint32_t sampleRate   = 16000;
-  const size_t   samplesPerChunk = sampleRate / 100;  /* 160 samples = 10 ms */
-  const size_t   numCh        = 1;
-  const double   freqHz       = 440.0;
-  const double   amplitude    = 0.3;
-  int16_t buf[160];
+  const uint32_t sampleRate = (uint32_t)g_audio_sample_rate_hz;
+  const size_t samplesPerChunk = (size_t)g_audio_samples_per_call_10ms;
+  const size_t numCh = 1;
+  const double freqHz = 440.0;
+  const double amplitude = 0.3;
+  std::vector<int16_t> buf(samplesPerChunk);
   uint32_t ts = 0;
   uint64_t sent = 0;
   while (!g_exit) {
@@ -806,7 +826,7 @@ static void send_audio_loop(AudioSendArgs a) {
       double t = (ts * 0.001) + (double)i / sampleRate;
       buf[i] = (int16_t)(amplitude * std::sin(2.0 * M_PI * freqHz * t) * 32767);
     }
-    int ret = g_pcm_send(a.sender, buf, ts,
+    int ret = g_pcm_send(a.sender, buf.data(), ts,
                          (uint32_t)samplesPerChunk,
                          2,               /* bytes_per_sample (TWO_BYTES_PER_SAMPLE) */
                          (uint32_t)numCh,
@@ -814,8 +834,8 @@ static void send_audio_loop(AudioSendArgs a) {
     if (ret < 0) break;
     ++sent;
     if (sent % 100 == 0)
-      fprintf(stderr, "[audio] sent chunk #%llu ts=%u (160 samples 16kHz mono)\n",
-              (unsigned long long)sent, ts);
+      fprintf(stderr, "[audio] sent chunk #%llu ts=%u (%zu samples %u Hz mono)\n",
+              (unsigned long long)sent, ts, samplesPerChunk, (unsigned)sampleRate);
     ts += 10;
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
@@ -1035,7 +1055,12 @@ int main(int argc, char* argv[]) {
   bool receiveVideo   = getenv_bool("AGORA_RECEIVE_VIDEO");
   bool sendAudio      = getenv_bool("AGORA_SEND_AUDIO");
   bool sendVideo      = getenv_bool("AGORA_SEND_VIDEO");
-  int  joinDurationSec = getenv_join_duration_sec(60);
+  int joinDurationSec = getenv_join_duration_sec(60);
+  {
+    int sr = getenv_int_or("AGORA_AUDIO_SAMPLE_RATE_HZ", 48000);
+    g_audio_sample_rate_hz = clamp_audio_sample_rate_hz(sr);
+    g_audio_samples_per_call_10ms = g_audio_sample_rate_hz / 100;
+  }
   std::string stopAfter(getenv_or("AGORA_REPRO_STOP_AFTER", ""));
   bool dumpBeforeMixingPcm = false;
   {
@@ -1057,6 +1082,8 @@ int main(int argc, char* argv[]) {
 
   fprintf(stderr, "[v2] repro_v2_full: v2 C API + dlopen/dlsym — parallel to repro_pthread_init.\n");
   fprintf(stderr, "Join duration: %d s (AGORA_JOIN_DURATION_SEC; 0=until Ctrl+C).\n", joinDurationSec);
+  fprintf(stderr, "PCM sample rate: %d Hz (AGORA_AUDIO_SAMPLE_RATE_HZ; publish tone + playback frame params).\n",
+          g_audio_sample_rate_hz);
   if (!stopAfter.empty())
     fprintf(stderr, "Bisect mode: will stop after '%s' (AGORA_REPRO_STOP_AFTER).\n", stopAfter.c_str());
   g_dump_before_mixing_pcm = dumpBeforeMixingPcm;
@@ -1298,16 +1325,19 @@ int main(int argc, char* argv[]) {
       g_luser_sub_all_video(local_user, &vopt);
     }
 
-    ret = g_luser_set_playback_params(local_user, 1, 16000, (int)RAW_AUDIO_FRAME_OP_MODE_READ_ONLY, 160);
+    ret = g_luser_set_playback_params(local_user, 1, (uint32_t)g_audio_sample_rate_hz,
+                                      (int)RAW_AUDIO_FRAME_OP_MODE_READ_ONLY, g_audio_samples_per_call_10ms);
     if (ret != 0) {
       fprintf(stderr, "agora_local_user_set_playback_audio_frame_parameters() failed %d\n", ret);
       g_conn_destroy(conn);
       if (g_svc_at_exit) g_svc_at_exit(svc); g_svc_release(svc); dlclose(lib); return 1;
     }
     if (g_dump_before_mixing_pcm) {
-      int bmr = g_luser_set_before_mixing_params(local_user, 1u, 16000u);
+      int bmr = g_luser_set_before_mixing_params(local_user, 1u, (uint32_t)g_audio_sample_rate_hz);
       if (bmr == 0)
-        fprintf(stderr, "agora_local_user_set_playback_audio_frame_before_mixing_parameters(1, 16000) OK.\n");
+        fprintf(stderr,
+                "agora_local_user_set_playback_audio_frame_before_mixing_parameters(1, %d) OK.\n",
+                g_audio_sample_rate_hz);
       else
         fprintf(stderr, "agora_local_user_set_playback_audio_frame_before_mixing_parameters() failed %d\n", bmr);
     }

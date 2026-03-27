@@ -49,6 +49,7 @@ AGORA_UID=myserver_NJKERNJ34MKPS3P0S
 | `AGORA_RECEIVE_VIDEO` | `1` = subscribe to remote video; `0` = audio only. | `0` |
 | `AGORA_REGISTER_AUDIO_OBSERVER` | `1` = register playback audio frame observer (logs remote audio callback frames); `0` = disable observer registration. | `1` |
 | `AGORA_ENABLE_AUDIO_VOLUME_INDICATION` | `1` = enable SDK audio volume indication callback (`onAudioVolumeIndication` / `on_audio_volume_indication`); `0` = disable. | `1` |
+| `AGORA_AUDIO_SAMPLE_RATE_HZ` | PCM sample rate (Hz) for the published tone, `setPlaybackAudioFrameParameters` / `getPlaybackAudioParams`, and before-mixing params. SDK-supported values: `8000`, `16000`, `32000`, `44100`, `48000`. Invalid values fall back to `48000`. | `48000` |
 | `AGORA_SEND_AUDIO` | `1` = publish local audio (440 Hz tone); `0` = no publish. | `0` |
 | `AGORA_SEND_VIDEO` | `1` = publish local video (720p @ 15 fps); `0` = no publish. | `0` |
 

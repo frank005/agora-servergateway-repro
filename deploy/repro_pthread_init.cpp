@@ -34,6 +34,7 @@
  *   AGORA_DUMP_PLAYBACK_PCM=0|1 — mixed playback to playback_mixed.pcm (default 0)
  *   AGORA_DUMP_PCM_DIR — output dir (default /tmp/agora_pcm_dump)
  *   AGORA_RECEIVE_VIDEO=1  - subscribe to and process remote video
+ *   AGORA_AUDIO_SAMPLE_RATE_HZ — PCM sample rate for publish tone + playback frame params (8000, 16000, 32000, 44100, 48000; default 48000)
  *   AGORA_SEND_AUDIO=1    - publish local audio (generated PCM, e.g. 440 Hz tone)
  *   AGORA_SEND_VIDEO=1    - publish local video (generated image, 720p)
  *   AGORA_JOIN_DURATION_SEC=N - stay in channel N seconds; 0 = until Ctrl+C (default 60)
@@ -260,6 +261,19 @@ static int getenv_int_or(const char* name, int def) {
   return (int)n;
 }
 
+/** ILocalUser playback / observer PCM rates per SDK (see NGIAgoraLocalUser.h). */
+static int clamp_audio_sample_rate_hz(int r) {
+  const int allowed[] = {8000, 16000, 32000, 44100, 48000};
+  for (int a : allowed) {
+    if (r == a) return r;
+  }
+  fprintf(stderr,
+          "AGORA_AUDIO_SAMPLE_RATE_HZ=%d is not supported; using 48000 "
+          "(allowed: 8000, 16000, 32000, 44100, 48000).\n",
+          r);
+  return 48000;
+}
+
 static bool getenv_bool_default(const char* name, bool def) {
   const char* v = getenv(name);
   if (!v || !v[0]) return def;
@@ -315,6 +329,10 @@ static void log_user_id_with_optional_uint(FILE* f, const char* tag, agora::user
   else
     fprintf(f, "%s user_id=%s uid_int=n/a (string account)\n", tag, u);
 }
+
+/* Set from AGORA_AUDIO_SAMPLE_RATE_HZ in main() before RtcConnection / send_audio_loop. */
+static int g_audio_sample_rate_hz = 48000;
+static int g_audio_samples_per_call_10ms = 480;
 
 namespace {
 std::mutex g_pcm_dump_mutex;
@@ -527,7 +545,8 @@ class PlaybackAudioObserver : public agora::media::IAudioFrameObserverBase {
     return p;
   }
   AudioParams getPlaybackAudioParams() override {
-    return AudioParams(16000, 1, agora::rtc::RAW_AUDIO_FRAME_OP_MODE_READ_ONLY, 160);
+    return AudioParams(g_audio_sample_rate_hz, 1, agora::rtc::RAW_AUDIO_FRAME_OP_MODE_READ_ONLY,
+                       g_audio_samples_per_call_10ms);
   }
   AudioParams getRecordAudioParams() override { return AudioParams(); }
   AudioParams getMixedAudioParams() override { return AudioParams(); }
@@ -707,14 +726,14 @@ class MinimalLocalUserObserver : public agora::rtc::ILocalUserObserver {
   bool cleaned_up_;
 };
 
-/* ---- Send audio thread: push 10 ms PCM (440 Hz tone) at 16 kHz mono ---- */
+/* ---- Send audio thread: push 10 ms PCM (440 Hz tone), mono at g_audio_sample_rate_hz ---- */
 static void send_audio_loop(agora::agora_refptr<agora::rtc::IAudioPcmDataSender> sender) {
-  const uint32_t sampleRate = 16000;
-  const size_t samplesPer10ms = sampleRate / 100;
+  const uint32_t sampleRate = (uint32_t)g_audio_sample_rate_hz;
+  const size_t samplesPer10ms = (size_t)g_audio_samples_per_call_10ms;
   const size_t numCh = 1;
   const double freqHz = 440.0;
   const double amplitude = 0.3;
-  int16_t buf[160];
+  std::vector<int16_t> buf(samplesPer10ms);
   uint32_t ts = 0;
   uint64_t sent = 0;
   while (!g_exit) {
@@ -723,13 +742,13 @@ static void send_audio_loop(agora::agora_refptr<agora::rtc::IAudioPcmDataSender>
       double s = amplitude * std::sin(2.0 * M_PI * freqHz * t);
       buf[i] = (int16_t)(s * 32767);
     }
-    if (sender->sendAudioPcmData(buf, ts, 0, samplesPer10ms,
+    if (sender->sendAudioPcmData(buf.data(), ts, 0, samplesPer10ms,
                                  agora::rtc::TWO_BYTES_PER_SAMPLE, numCh, sampleRate) < 0)
       break;
     ++sent;
     if (sent % 100 == 0)
-      fprintf(stderr, "[audio] sent chunk #%llu ts=%u (160 samples 16kHz mono)\n",
-              (unsigned long long)sent, ts);
+      fprintf(stderr, "[audio] sent chunk #%llu ts=%u (%zu samples %u Hz mono)\n",
+              (unsigned long long)sent, ts, samplesPer10ms, (unsigned)sampleRate);
     ts += 10;
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
@@ -920,6 +939,11 @@ int main(int argc, char* argv[]) {
   bool sendAudio = getenv_bool("AGORA_SEND_AUDIO");
   bool sendVideo = getenv_bool("AGORA_SEND_VIDEO");
   int joinDurationSec = getenv_join_duration_sec(60);
+  {
+    int sr = getenv_int_or("AGORA_AUDIO_SAMPLE_RATE_HZ", 48000);
+    g_audio_sample_rate_hz = clamp_audio_sample_rate_hz(sr);
+    g_audio_samples_per_call_10ms = g_audio_sample_rate_hz / 100;
+  }
   std::string stopAfter(getenv_or("AGORA_REPRO_STOP_AFTER", ""));
   bool encryptionEnable = getenv_bool("AGORA_ENCRYPTION_ENABLE");
   std::string encryptionModeStr(getenv_trimmed_or("AGORA_ENCRYPTION_MODE", ""));
@@ -963,6 +987,8 @@ int main(int argc, char* argv[]) {
               "onAudioVolumeIndication will not fire.\n");
   }
   fprintf(stderr, "Join duration: %d s (AGORA_JOIN_DURATION_SEC; 0=until Ctrl+C).\n", joinDurationSec);
+  fprintf(stderr, "PCM sample rate: %d Hz (AGORA_AUDIO_SAMPLE_RATE_HZ; publish tone + playback frame params).\n",
+          g_audio_sample_rate_hz);
   if (!stopAfter.empty())
     fprintf(stderr, "Bisect mode: will stop after '%s' (AGORA_REPRO_STOP_AFTER).\n", stopAfter.c_str());
 
@@ -1146,8 +1172,9 @@ int main(int argc, char* argv[]) {
       localUser->subscribeAllVideo(vopt);
     }
 
-    ret = localUser->setPlaybackAudioFrameParameters(1, 16000,
-                                                    agora::rtc::RAW_AUDIO_FRAME_OP_MODE_READ_ONLY, 160);
+    ret = localUser->setPlaybackAudioFrameParameters(
+        1, (uint32_t)g_audio_sample_rate_hz, agora::rtc::RAW_AUDIO_FRAME_OP_MODE_READ_ONLY,
+        g_audio_samples_per_call_10ms);
     if (ret != 0) {
       fprintf(stderr, "setPlaybackAudioFrameParameters() failed %d\n", ret);
       connection = nullptr;
@@ -1155,9 +1182,9 @@ int main(int argc, char* argv[]) {
       return 1;
     }
     if (g_opt_dump_before_mixing_pcm) {
-      int bmr = localUser->setPlaybackAudioFrameBeforeMixingParameters(1, 16000);
+      int bmr = localUser->setPlaybackAudioFrameBeforeMixingParameters(1, (uint32_t)g_audio_sample_rate_hz);
       if (bmr == 0)
-        fprintf(stderr, "setPlaybackAudioFrameBeforeMixingParameters(1, 16000) OK.\n");
+        fprintf(stderr, "setPlaybackAudioFrameBeforeMixingParameters(1, %d) OK.\n", g_audio_sample_rate_hz);
       else
         fprintf(stderr, "setPlaybackAudioFrameBeforeMixingParameters() failed %d\n", bmr);
     }
