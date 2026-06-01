@@ -20,7 +20,7 @@ All variables are optional unless noted. Use `deploy/.env` (or `--env-file deplo
 | `AGORA_SERVICE_AUDIO_SCENARIO` | Service audio scenario: `DEFAULT`, `CHATROOM`, `GAME_STREAMING`, … or numeric `0`–`10`. | `DEFAULT` |
 | `AGORA_SET_CHANNEL_PROFILE` | `1` = set channel profile on **RtcConnection** config; `0` = do not set profile field. | `0` |
 | `AGORA_CHANNEL_PROFILE` | Connection-level channel profile when enabled: `COMMUNICATION` or `LIVE_BROADCASTING` (or `0`/`1`). | `COMMUNICATION` |
-| `AGORA_REGISTER_CONN_OBSERVER` | v2 only: `1` = register `rtc_conn_observer` callbacks; `0` = do not register (default, more stable). | `0` |
+| `AGORA_REGISTER_CONN_OBSERVER` | v2 only: `1` = register `rtc_conn_observer` callbacks; `0` = do not register (default, more stable). With `0`, v2 still logs connection network info by polling after connect (see below). | `0` |
 | `AGORA_REGISTER_LOCAL_USER_OBSERVER` | `1` = register local-user observer callbacks (C++ LL and v2); `0` = disable registration. | `1` |
 | `AGORA_LU_CB_AUDIO_SUB` | When local-user observer is enabled, gate audio-track-subscribed callback. | `1` |
 | `AGORA_LU_CB_VIDEO_SUB` | When local-user observer is enabled, gate video-track-subscribed callback. | `1` |
@@ -38,6 +38,17 @@ All variables are optional unless noted. Use `deploy/.env` (or `--env-file deplo
 AGORA_USE_STRING_UID=1
 AGORA_UID=myserver_NJKERNJ34MKPS3P0S
 ```
+
+## v2 connection network info (SDK 1127722+)
+
+When `AGORA_REPRO_IMPL=v2` and the repro joins a channel (`AGORA_CHANNEL_ID` set), **`repro_v2_full` automatically** (no separate env var):
+
+1. Sets private parameter `rtc.hide_connection_ip_and_type` to expose IP/type (via service `agora_parameter_set_bool` before `agora_rtc_conn_create`).
+2. After a successful connect, calls `agora_rtc_conn_get_conn_network_info` and logs to stderr, e.g. `[conn] network_info: ip='203.0.113.1' type=1 (UDP)`.
+
+This is **not** [cloud proxy](https://docs.agora.io/en/video-calling/develop/cloud-proxy) (`rtc.enable_proxy` / `rtc.proxy_server`). Cloud proxy routes media through Agora’s proxy; connection network info only reports which local IP and UDP/TCP path the client used after join.
+
+Requires the SDK in `agora_rtc_sdk/` at build **1127722** or newer (`PACKAGE_INFO`). The C++ repro (`repro_pthread_init`) does not implement this API.
 
 ## Join duration and media
 

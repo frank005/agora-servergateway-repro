@@ -7,7 +7,7 @@ This directory contains sample apps and deployment files to run the **Agora RTC*
 | Item | Description |
 |------|-------------|
 | `repro_pthread_init.cpp` | C++ repro using the SDK’s C++ API: `createAgoraService()`, `initialize()`, create local audio track, optional connect/publish/subscribe. |
-| `repro_v2_full.cpp` | Parallel repro using the **v2 C API** (`agora_service_*`, `agora_rtc_conn_*`, etc.) with **dlopen/dlsym only** (no link to `libagora_rtc_sdk`). Same env vars and behavior as the C++ repro. Set `AGORA_REPRO_IMPL=v2` to run this binary. |
+| `repro_v2_full.cpp` | Parallel repro using the **v2 C API** (`agora_service_*`, `agora_rtc_conn_*`, etc.) with **dlopen/dlsym only** (no link to `libagora_rtc_sdk`). Same env vars and behavior as the C++ repro. Set `AGORA_REPRO_IMPL=v2` to run this binary. On join (SDK 1127722+), logs connection IP and transport via `agora_rtc_conn_get_conn_network_info` — not cloud proxy; see `ENV.md`. |
 | `CMakeLists.txt` / `Makefile.repro` | Build both repros (CMake builds both; Makefile.repro builds only `repro_pthread_init` for local use). |
 | `Dockerfile` | Multi-stage build (Ubuntu 24.04): compiles both repros + `run_with_rtprio0` entrypoint; runtime runs **without** `CAP_SYS_NICE`. |
 | `docker-compose.yml` (root) | Main Compose file: `cap_drop: [ALL]`, `ulimits.rtprio: 0`, image `servergateway-repro`. Use from repo root. |
