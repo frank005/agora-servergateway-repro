@@ -358,6 +358,8 @@ typedef int   (*pfn_agora_rtc_conn_register_observer)(void*, rtc_conn_observer*)
 typedef int   (*pfn_agora_rtc_conn_unregister_observer)(void*);
 typedef void* (*pfn_agora_rtc_conn_get_local_user)(void*);
 typedef void* (*pfn_agora_rtc_conn_get_agora_parameter)(void*);
+typedef void* (*pfn_agora_service_get_agora_parameter)(void*);
+typedef int   (*pfn_agora_parameter_set_bool)(void*, const char*, int);
 typedef int   (*pfn_agora_parameter_set_parameters)(void*, const char*);
 typedef rtc_conn_network_info* (*pfn_agora_rtc_conn_get_conn_network_info)(void*);
 typedef void  (*pfn_agora_rtc_conn_destroy_conn_network_info)(void*, rtc_conn_network_info*);
@@ -411,7 +413,9 @@ static pfn_agora_rtc_conn_register_observer                     g_conn_register_
 static pfn_agora_rtc_conn_unregister_observer                   g_conn_unregister_obs = nullptr;
 static pfn_agora_rtc_conn_get_local_user                        g_conn_get_local_user = nullptr;
 static pfn_agora_rtc_conn_get_agora_parameter                   g_conn_get_agora_parameter = nullptr;
-static pfn_agora_parameter_set_parameters                     g_param_set_parameters = nullptr;
+static pfn_agora_service_get_agora_parameter                    g_svc_get_agora_parameter = nullptr;
+static pfn_agora_parameter_set_bool                             g_param_set_bool = nullptr;
+static pfn_agora_parameter_set_parameters                       g_param_set_parameters = nullptr;
 static pfn_agora_rtc_conn_get_conn_network_info                 g_conn_get_network_info = nullptr;
 static pfn_agora_rtc_conn_destroy_conn_network_info             g_conn_destroy_network_info = nullptr;
 static pfn_agora_local_user_subscribe_all_audio                 g_luser_sub_all_audio = nullptr;
@@ -476,6 +480,8 @@ static int load_symbols(void* lib) {
   LOAD_SYM(lib, "agora_rtc_conn_unregister_observer", pfn_agora_rtc_conn_unregister_observer, g_conn_unregister_obs);
   LOAD_SYM(lib, "agora_rtc_conn_get_local_user",    pfn_agora_rtc_conn_get_local_user,    g_conn_get_local_user);
   LOAD_SYM(lib, "agora_rtc_conn_get_agora_parameter", pfn_agora_rtc_conn_get_agora_parameter, g_conn_get_agora_parameter);
+  LOAD_SYM(lib, "agora_service_get_agora_parameter", pfn_agora_service_get_agora_parameter, g_svc_get_agora_parameter);
+  LOAD_SYM(lib, "agora_parameter_set_bool", pfn_agora_parameter_set_bool, g_param_set_bool);
   LOAD_SYM(lib, "agora_parameter_set_parameters", pfn_agora_parameter_set_parameters, g_param_set_parameters);
   LOAD_SYM(lib, "agora_rtc_conn_get_conn_network_info", pfn_agora_rtc_conn_get_conn_network_info, g_conn_get_network_info);
   LOAD_SYM(lib, "agora_rtc_conn_destroy_conn_network_info", pfn_agora_rtc_conn_destroy_conn_network_info, g_conn_destroy_network_info);
@@ -783,13 +789,78 @@ static void log_conn_network_info(void* conn) {
   g_conn_destroy_network_info(conn, info);
 }
 
-static bool wait_for_connection_established(int timeout_sec) {
+static bool conn_network_info_has_ip(const rtc_conn_network_info* info) {
+  return info && info->ip && info->ip[0] && std::strcmp(info->ip, "?") != 0;
+}
+
+static bool try_set_hide_connection_param_on(void* param, const char* label) {
+  if (!param) return false;
+  static const char* const kKey = "rtc.hide_connection_ip_and_type";
+  if (g_param_set_bool) {
+    int pr = g_param_set_bool(param, kKey, 0);
+    if (pr == 0) {
+      fprintf(stderr, "[conn] %s agora_parameter_set_bool(%s, 0) OK.\n", label, kKey);
+      return true;
+    }
+    fprintf(stderr, "[conn] %s agora_parameter_set_bool(%s, 0) failed %d (ERR_NOT_SUPPORTED=-4)\n",
+            label, kKey, pr);
+  }
+  if (g_param_set_parameters) {
+    int pr = g_param_set_parameters(param, "{\"rtc.hide_connection_ip_and_type\":false}");
+    if (pr == 0) {
+      fprintf(stderr,
+              "[conn] %s agora_parameter_set_parameters({\"rtc.hide_connection_ip_and_type\":false}) OK.\n",
+              label);
+      return true;
+    }
+    fprintf(stderr,
+            "[conn] %s agora_parameter_set_parameters({\"rtc.hide_connection_ip_and_type\":false}) failed %d "
+            "(ERR_NOT_SUPPORTED=-4)\n",
+            label, pr);
+  }
+  return false;
+}
+
+static void try_enable_conn_network_info_visibility(void* svc, void* conn) {
+  /* Agora guidance: set on service before agora_rtc_conn_create(); conn-level setParameters often returns -4. */
+  bool ok = false;
+  if (svc && g_svc_get_agora_parameter)
+    ok = try_set_hide_connection_param_on(g_svc_get_agora_parameter(svc), "service");
+  if (!ok && conn)
+    ok = try_set_hide_connection_param_on(g_conn_get_agora_parameter(conn), "conn");
+  if (!ok)
+    fprintf(stderr,
+            "[conn] rtc.hide_connection_ip_and_type not set (ERR_NOT_SUPPORTED=-4 on this IAgoraParameter). "
+            "Requires SDK build 1127722+ (you have it); use agora_parameter_set_bool on service before "
+            "agora_rtc_conn_create(). get_conn_network_info may still return hidden/empty IP.\n");
+}
+
+static void wait_and_log_conn_network_info(void* conn, int timeout_sec, bool conn_observer_registered) {
+  if (!conn || !g_conn_get_network_info || !g_conn_destroy_network_info) return;
   const int steps = timeout_sec * 10;
   for (int i = 0; i < steps && !g_exit; ++i) {
-    if (g_conn_established.load(std::memory_order_acquire)) return true;
+    if (g_conn_established.load(std::memory_order_acquire)) {
+      log_conn_network_info(conn);
+      return;
+    }
+    rtc_conn_network_info* info = g_conn_get_network_info(conn);
+    if (conn_network_info_has_ip(info)) {
+      const char* ip = info->ip;
+      fprintf(stderr, "[conn] network_info (polled): ip='%s' type=%d (%s)\n",
+              ip, info->type, conn_network_type_name(info->type));
+      g_conn_destroy_network_info(conn, info);
+      return;
+    }
+    if (info) g_conn_destroy_network_info(conn, info);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
-  return g_conn_established.load(std::memory_order_acquire);
+  if (!conn_observer_registered)
+    fprintf(stderr,
+            "[conn] Connection observer disabled (AGORA_REGISTER_CONN_OBSERVER=0); polled after connect instead "
+            "of on_connected.\n");
+  else if (!g_conn_established.load(std::memory_order_acquire))
+    fprintf(stderr, "[conn] Timed out waiting for on_connected; logging network_info anyway.\n");
+  log_conn_network_info(conn);
 }
 
 static void cb_on_connected(void* conn, const rtc_conn_info* info, int reason) {
@@ -1322,25 +1393,13 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "Connecting to channel '%s' (uid=%s)... receive_video=%d send_audio=%d send_video=%d\n",
             channelId.c_str(), uid.c_str(), receiveVideo ? 1 : 0, sendAudio ? 1 : 0, sendVideo ? 1 : 0);
 
+    /* Private RTC parameter before agora_rtc_conn_create (1127722+). */
+    try_enable_conn_network_info_visibility(svc, nullptr);
+
     void* conn = g_conn_create(svc, &conn_cfg);
     if (!conn) {
       fprintf(stderr, "agora_rtc_conn_create() failed\n");
       if (g_svc_at_exit) g_svc_at_exit(svc); g_svc_release(svc); dlclose(lib); return 1;
-    }
-
-    /* Private RTC parameter before join (connection object exists; set before connect). */
-    {
-      void* conn_param = g_conn_get_agora_parameter(conn);
-      if (!conn_param) {
-        fprintf(stderr, "agora_rtc_conn_get_agora_parameter() returned null\n");
-      } else {
-        int pr = g_param_set_parameters(conn_param, "{\"rtc.hide_connection_ip_and_type\":false}");
-        if (pr == 0)
-          fprintf(stderr,
-                  "agora_parameter_set_parameters({\"rtc.hide_connection_ip_and_type\":false}) OK.\n");
-        else
-          fprintf(stderr, "agora_parameter_set_parameters() failed %d\n", pr);
-      }
     }
 
     /* Connection observer */
@@ -1590,10 +1649,7 @@ int main(int argc, char* argv[]) {
             "agora_rtc_conn_connect() OK; join_user_id='%s' (see [conn] Connected for local_user_id + internal_uid).\n",
             uid.c_str());
 
-    if (wait_for_connection_established(30))
-      log_conn_network_info(conn);
-    else
-      fprintf(stderr, "[conn] Timed out waiting for on_connected; skipping network_info query.\n");
+    wait_and_log_conn_network_info(conn, 30, registerConnObserver);
 
     if (enableAudioVolumeIndication) {
       int vir = g_luser_set_volume_indication(local_user, volIndIntervalMs, volIndSmooth, volIndVad);
