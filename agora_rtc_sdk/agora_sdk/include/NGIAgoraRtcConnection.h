@@ -47,9 +47,11 @@ struct TConnectionInfo {
 
   int proxyType;
 
-  util::AString connectionIp;
-
-  TConnectionInfo() : id(-1), state(CONNECTION_STATE_DISCONNECTED), internalUid(0), proxyType(0) {}
+  TConnectionInfo()
+      : id(-1),
+        state(CONNECTION_STATE_DISCONNECTED),
+        internalUid(0),
+        proxyType(0) {}
 };
 
 struct TConnectSettings {

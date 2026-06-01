@@ -88,6 +88,7 @@
 #include "c/api2/agora_video_track.h"
 #include "c/api2/agora_media_node_factory.h"
 #include "c/base/agora_media_base.h"
+#include "c/base/agora_parameter.h"
 
 /* ============================================================
  * Signal handling
@@ -356,6 +357,10 @@ typedef int   (*pfn_agora_rtc_conn_enable_encryption)(void*, int, const encrypti
 typedef int   (*pfn_agora_rtc_conn_register_observer)(void*, rtc_conn_observer*);
 typedef int   (*pfn_agora_rtc_conn_unregister_observer)(void*);
 typedef void* (*pfn_agora_rtc_conn_get_local_user)(void*);
+typedef void* (*pfn_agora_rtc_conn_get_agora_parameter)(void*);
+typedef int   (*pfn_agora_parameter_set_parameters)(void*, const char*);
+typedef rtc_conn_network_info* (*pfn_agora_rtc_conn_get_conn_network_info)(void*);
+typedef void  (*pfn_agora_rtc_conn_destroy_conn_network_info)(void*, rtc_conn_network_info*);
 typedef int   (*pfn_agora_local_user_subscribe_all_audio)(void*);
 typedef int   (*pfn_agora_local_user_subscribe_all_video)(void*, const video_subscription_options*);
 typedef int   (*pfn_agora_local_user_set_playback_audio_frame_parameters)(void*, unsigned int, unsigned int, int, int);
@@ -405,6 +410,10 @@ static pfn_agora_rtc_conn_enable_encryption                     g_conn_enable_en
 static pfn_agora_rtc_conn_register_observer                     g_conn_register_obs = nullptr;
 static pfn_agora_rtc_conn_unregister_observer                   g_conn_unregister_obs = nullptr;
 static pfn_agora_rtc_conn_get_local_user                        g_conn_get_local_user = nullptr;
+static pfn_agora_rtc_conn_get_agora_parameter                   g_conn_get_agora_parameter = nullptr;
+static pfn_agora_parameter_set_parameters                     g_param_set_parameters = nullptr;
+static pfn_agora_rtc_conn_get_conn_network_info                 g_conn_get_network_info = nullptr;
+static pfn_agora_rtc_conn_destroy_conn_network_info             g_conn_destroy_network_info = nullptr;
 static pfn_agora_local_user_subscribe_all_audio                 g_luser_sub_all_audio = nullptr;
 static pfn_agora_local_user_subscribe_all_video                 g_luser_sub_all_video = nullptr;
 static pfn_agora_local_user_set_playback_audio_frame_parameters g_luser_set_playback_params = nullptr;
@@ -466,6 +475,10 @@ static int load_symbols(void* lib) {
   LOAD_SYM(lib, "agora_rtc_conn_register_observer", pfn_agora_rtc_conn_register_observer, g_conn_register_obs);
   LOAD_SYM(lib, "agora_rtc_conn_unregister_observer", pfn_agora_rtc_conn_unregister_observer, g_conn_unregister_obs);
   LOAD_SYM(lib, "agora_rtc_conn_get_local_user",    pfn_agora_rtc_conn_get_local_user,    g_conn_get_local_user);
+  LOAD_SYM(lib, "agora_rtc_conn_get_agora_parameter", pfn_agora_rtc_conn_get_agora_parameter, g_conn_get_agora_parameter);
+  LOAD_SYM(lib, "agora_parameter_set_parameters", pfn_agora_parameter_set_parameters, g_param_set_parameters);
+  LOAD_SYM(lib, "agora_rtc_conn_get_conn_network_info", pfn_agora_rtc_conn_get_conn_network_info, g_conn_get_network_info);
+  LOAD_SYM(lib, "agora_rtc_conn_destroy_conn_network_info", pfn_agora_rtc_conn_destroy_conn_network_info, g_conn_destroy_network_info);
   LOAD_SYM(lib, "agora_local_user_subscribe_all_audio",            pfn_agora_local_user_subscribe_all_audio,            g_luser_sub_all_audio);
   LOAD_SYM(lib, "agora_local_user_subscribe_all_video",            pfn_agora_local_user_subscribe_all_video,            g_luser_sub_all_video);
   LOAD_SYM(lib, "agora_local_user_set_playback_audio_frame_parameters", pfn_agora_local_user_set_playback_audio_frame_parameters, g_luser_set_playback_params);
@@ -498,6 +511,7 @@ static std::atomic<uint64_t> g_audio_frames_received{0};
 static std::atomic<uint64_t> g_video_frames_received{0};
 static std::atomic<uint64_t> g_vol_ind_seq_local{0};
 static std::atomic<uint64_t> g_vol_ind_seq_remote{0};
+static std::atomic<bool> g_conn_established{false};
 
 static bool              g_enable_audio_observer = true;
 static bool              g_conn_obs_registered = false;
@@ -747,11 +761,43 @@ static void log_remote_user_id_uid_int(FILE* out, const char* prefix, const char
     fprintf(out, "%s user_id=%s uid_int=n/a (string account)\n", prefix, u);
 }
 
+static const char* conn_network_type_name(int type) {
+  switch (type) {
+    case 0: return "Unknown";
+    case 1: return "UDP";
+    case 2: return "TCP";
+    default: return "Other";
+  }
+}
+
+static void log_conn_network_info(void* conn) {
+  if (!conn || !g_conn_get_network_info || !g_conn_destroy_network_info) return;
+  rtc_conn_network_info* info = g_conn_get_network_info(conn);
+  if (!info) {
+    fprintf(stderr, "[conn] agora_rtc_conn_get_conn_network_info() returned null\n");
+    return;
+  }
+  const char* ip = (info->ip && info->ip[0]) ? info->ip : "?";
+  fprintf(stderr, "[conn] network_info: ip='%s' type=%d (%s)\n",
+          ip, info->type, conn_network_type_name(info->type));
+  g_conn_destroy_network_info(conn, info);
+}
+
+static bool wait_for_connection_established(int timeout_sec) {
+  const int steps = timeout_sec * 10;
+  for (int i = 0; i < steps && !g_exit; ++i) {
+    if (g_conn_established.load(std::memory_order_acquire)) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  return g_conn_established.load(std::memory_order_acquire);
+}
+
 static void cb_on_connected(void* conn, const rtc_conn_info* info, int reason) {
   (void)conn;
   const char* ch = (info && info->channel_id) ? info->channel_id : "?";
   const char* lid = (info && info->local_user_id) ? info->local_user_id : "?";
   unsigned int iuid = info ? info->internal_uid : 0;
+  g_conn_established.store(true, std::memory_order_release);
   fprintf(stderr, "[conn] Connected: channel='%s' local_user_id='%s' internal_uid=%u reason=%d\n",
           ch, lid, iuid, reason);
 }
@@ -1282,6 +1328,21 @@ int main(int argc, char* argv[]) {
       if (g_svc_at_exit) g_svc_at_exit(svc); g_svc_release(svc); dlclose(lib); return 1;
     }
 
+    /* Private RTC parameter before join (connection object exists; set before connect). */
+    {
+      void* conn_param = g_conn_get_agora_parameter(conn);
+      if (!conn_param) {
+        fprintf(stderr, "agora_rtc_conn_get_agora_parameter() returned null\n");
+      } else {
+        int pr = g_param_set_parameters(conn_param, "{\"rtc.hide_connection_ip_and_type\":false}");
+        if (pr == 0)
+          fprintf(stderr,
+                  "agora_parameter_set_parameters({\"rtc.hide_connection_ip_and_type\":false}) OK.\n");
+        else
+          fprintf(stderr, "agora_parameter_set_parameters() failed %d\n", pr);
+      }
+    }
+
     /* Connection observer */
     memset(&g_conn_obs, 0, sizeof(g_conn_obs));
     if (registerConnObserver) {
@@ -1517,6 +1578,7 @@ int main(int argc, char* argv[]) {
     }
 
     /* ------ connect() ------ */
+    g_conn_established.store(false, std::memory_order_release);
     ret = g_conn_connect(conn, token.c_str(), channelId.c_str(), uid.c_str());
     if (ret != 0) {
       fprintf(stderr, "agora_rtc_conn_connect() failed %d\n", ret);
@@ -1527,6 +1589,11 @@ int main(int argc, char* argv[]) {
     fprintf(stderr,
             "agora_rtc_conn_connect() OK; join_user_id='%s' (see [conn] Connected for local_user_id + internal_uid).\n",
             uid.c_str());
+
+    if (wait_for_connection_established(30))
+      log_conn_network_info(conn);
+    else
+      fprintf(stderr, "[conn] Timed out waiting for on_connected; skipping network_info query.\n");
 
     if (enableAudioVolumeIndication) {
       int vir = g_luser_set_volume_indication(local_user, volIndIntervalMs, volIndSmooth, volIndVad);

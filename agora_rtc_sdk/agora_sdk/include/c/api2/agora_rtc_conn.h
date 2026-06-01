@@ -39,6 +39,23 @@ typedef struct _rtc_conn_info {
   uid_t internal_uid;
 } rtc_conn_info;
 
+/**
+ * The sensitive network information on the RTC Connection.
+ */
+typedef struct _rtc_conn_network_info {
+  /**
+   * The IP of the current connection.
+   */
+  const char* ip;
+  /**
+   * Transport type of the current connection.
+   * - 0: Unknown.
+   * - 1: UDP.
+   * - 2: TCP.
+   */
+  int type;
+} rtc_conn_network_info;
+
 typedef struct _audio_subscription_options {
   /**
    * Determines whether to subscribe to audio packet only, i.e., RTP packet.
@@ -230,6 +247,24 @@ AGORA_API_C rtc_conn_info* AGORA_CALL_C agora_rtc_conn_get_conn_info(AGORA_HANDL
  */
 AGORA_API_C_VOID agora_rtc_conn_destroy_conn_info(AGORA_HANDLE agora_rtc_conn, rtc_conn_info* info);
 
+/**
+ * Gets the network information of the current RTC connection.
+ *
+ * @note Do not call this function in any SDK callback. This is a synchronous
+ * query API. Calling it in an SDK callback may cause re-entry into the SDK main
+ * queue, in which case the function returns only the default value.
+ *
+ * @ANNOTATION:GROUP:agora_rtc_conn
+ */
+AGORA_API_C rtc_conn_network_info* AGORA_CALL_C agora_rtc_conn_get_conn_network_info(
+    AGORA_HANDLE agora_rtc_conn);
+
+/**
+ * @ANNOTATION:GROUP:agora_rtc_conn
+ */
+AGORA_API_C_VOID agora_rtc_conn_destroy_conn_network_info(AGORA_HANDLE agora_rtc_conn,
+                                                          rtc_conn_network_info* info);
+
 
 /**
  * @ANNOTATION:GROUP:agora_rtc_conn
@@ -327,6 +362,11 @@ AGORA_API_C_HDL agora_rtc_conn_get_user_info_by_uid(AGORA_HANDLE agora_rtc_conn,
  * @ANNOTATION:GROUP:agora_rtc_conn
  */
 AGORA_API_C_HDL agora_rtc_conn_get_ntp_time(AGORA_HANDLE agora_rtc_conn);
+
+/**
+ * @ANNOTATION:GROUP:agora_rtc_conn
+ */
+AGORA_API_C_LITERAL agora_rtc_conn_get_sid(AGORA_HANDLE agora_rtc_conn);
 
 
 #ifdef __cplusplus

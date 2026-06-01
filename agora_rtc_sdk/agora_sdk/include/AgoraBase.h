@@ -6260,6 +6260,14 @@ struct EncryptionConfig {
    */
   uint8_t encryptionKdfSalt[32];
 
+  /**
+   * Whether to enable data stream encryption:
+   * - true: Enable data stream encryption. When enabled, data streams sent via
+   *   `createDataStream` will be encrypted using the same encryption configuration
+   *   (mode and key) as the media stream.
+   * - false: (Default) Disable data stream encryption. Data streams are not encrypted
+   *   even if media stream encryption is enabled.
+   */
   bool datastreamEncryptionEnabled;
 
   EncryptionConfig()

@@ -1362,7 +1362,24 @@ typedef struct _encryption_config {
    * @note If you do not set an encryption key or set it as NULL, you cannot use the built-in encryption, and the SDK returns #ERR_INVALID_ARGUMENT (-2).
    */
   const char* encryption_key;
+  /**
+   * Salt, 32 bytes in length. Agora recommends that you use OpenSSL to generate salt on the server
+   * side.
+   *
+   * @note This parameter takes effect only in `AES_128_GCM2` or `AES_256_GCM2` encrypted mode.
+   * In this case, ensure that this parameter is not 0.
+   */
   uint8_t encryption_kdf_salt[32];
+
+  /**
+   * Whether to enable data stream encryption:
+   * - true: Enable data stream encryption. When enabled, data streams sent via
+   *   `createDataStream` will be encrypted using the same encryption configuration
+   *   (mode and key) as the media stream.
+   * - false: Disable data stream encryption. Data streams are not encrypted
+   *   even if media stream encryption is enabled.
+   */
+  bool datastream_encryption_enabled;
 } encryption_config;
 
 
